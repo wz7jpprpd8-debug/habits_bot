@@ -2,6 +2,8 @@ import asyncpg
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.utils import executor
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from datetime import date
 
 from config import BOT_TOKEN, DATABASE_URL
 
@@ -87,7 +89,7 @@ async def list_habits(message: types.Message):
     db = await get_db()
     rows = await db.fetch(
         """
-        SELECT h.id, h.title
+        SELECT h.id, h.title, h.streak
         FROM habits h
         JOIN users u ON h.user_id = u.id
         WHERE u.telegram_id = $1 AND h.is_active = TRUE
@@ -101,11 +103,17 @@ async def list_habits(message: types.Message):
         await message.answer("У тебя пока нет привычек")
         return
 
-    text = "📌 Твои привычки:\n\n"
     for r in rows:
-        text += f"{r['id']}. {r['title']}\n"
+        text = f"📌 <b>{r['title']}</b>\n🔥 Серия: {r['streak']} дней"
 
-    await message.answer(text)
+        kb = InlineKeyboardMarkup().add(
+            InlineKeyboardButton(
+                "✅ Выполнено сегодня",
+                callback_data=f"done:{r['id']}"
+            )
+        )
+
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 
 @dp.message_handler(commands=["ai"])
