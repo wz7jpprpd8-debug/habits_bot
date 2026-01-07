@@ -270,7 +270,26 @@ async def ai_analysis(message: types.Message):
 
     await db.close()
     
+from openai import OpenAI
+client = OpenAI()
 
+
+@dp.message_handler(commands=["aitest"])
+async def ai_test(message: types.Message):
+    try:
+        print("DEBUG: aitest called")
+
+        response = client.responses.create(
+            model="gpt-4.1-mini",
+            input="Ответь словом OK"
+        )
+
+        await message.answer(response.output_text)
+
+    except Exception as e:
+        await message.answer(f"AI ERROR: {e}")
+        print("AI ERROR:", e)
+        
 
 # =========================
 # CALLBACKS
