@@ -22,6 +22,10 @@ from config import BOT_TOKEN, DATABASE_URL
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 client = OpenAI()
+import os
+print("OPENAI KEY PREFIX:", os.getenv("OPENAI_API_KEY", "")[:5])
+
+
 dp.middleware.setup(LoggingMiddleware())
 
 
