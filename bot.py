@@ -9,6 +9,7 @@ from config import BOT_TOKEN, DATABASE_URL
 # =========================
 # INIT
 # =========================
+print("DEBUG BOT_TOKEN repr:", repr(BOT_TOKEN))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
