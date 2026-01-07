@@ -1,10 +1,10 @@
 import asyncpg
+from datetime import date, timedelta
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
-from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from datetime import date
-from datetime import timedelta
+from aiogram.utils import executor
 
 from config import BOT_TOKEN, DATABASE_URL
 
@@ -12,7 +12,6 @@ from config import BOT_TOKEN, DATABASE_URL
 # =========================
 # INIT
 # =========================
-print("DEBUG BOT_TOKEN repr:", repr(BOT_TOKEN))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
@@ -20,22 +19,22 @@ dp.middleware.setup(LoggingMiddleware())
 
 
 # =========================
-# DB INIT
+# DB HELPERS
 # =========================
-
-async def init_db():
-    conn = await asyncpg.connect(DATABASE_URL)
-    with open("models.sql", "r", encoding="utf-8") as f:
-        await conn.execute(f.read())
-    await conn.close()
-
 
 async def get_db():
     return await asyncpg.connect(DATABASE_URL)
 
 
+async def init_db():
+    conn = await get_db()
+    with open("models.sql", "r", encoding="utf-8") as f:
+        await conn.execute(f.read())
+    await conn.close()
+
+
 # =========================
-# HANDLERS
+# COMMANDS
 # =========================
 
 @dp.message_handler(commands=["start"])
@@ -56,9 +55,8 @@ async def start_cmd(message: types.Message):
         "👋 Привет!\n\n"
         "Я бот для трекинга привычек.\n\n"
         "Команды:\n"
-        "/add Название\n"
-        "/list\n"
-        "/ai — AI-анализ"
+        "/add Название привычки\n"
+        "/list — список привычек\n"
     )
 
 
@@ -77,8 +75,7 @@ async def add_habit(message: types.Message):
 
     await db.execute(
         "INSERT INTO habits (user_id, title) VALUES ($1, $2)",
-        user["id"],
-        title
+        user["id"], title
     )
     await db.close()
 
@@ -105,7 +102,10 @@ async def list_habits(message: types.Message):
         return
 
     for r in rows:
-        text = f"📌 <b>{r['title']}</b>\n🔥 Серия: {r['streak']} дней"
+        text = (
+            f"📌 <b>{r['title']}</b>\n"
+            f"🔥 Серия: {r['streak']} дней"
+        )
 
         kb = InlineKeyboardMarkup().add(
             InlineKeyboardButton(
@@ -117,12 +117,10 @@ async def list_habits(message: types.Message):
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 
-@dp.message_handler(commands=["ai"])
-async def ai_stub(message: types.Message):
-    await message.answer(
-        "🧠 AI-анализ будет подключён следующим шагом.\n"
-        "Сейчас проверяем стабильный запуск 😉"
-    )
+# =========================
+# CALLBACKS
+# =========================
+
 @dp.callback_query_handler(lambda c: c.data.startswith("done:"))
 async def mark_done(callback: types.CallbackQuery):
     habit_id = int(callback.data.split(":")[1])
@@ -130,11 +128,11 @@ async def mark_done(callback: types.CallbackQuery):
 
     db = await get_db()
 
-    # Проверка: уже отмечено сегодня?
+    # Уже отмечено сегодня?
     exists = await db.fetchrow(
         """
         SELECT 1 FROM habit_logs
-        WHERE habit_id = $1 AND date = $2
+        WHERE habit_id=$1 AND date=$2
         """,
         habit_id, today
     )
@@ -149,21 +147,19 @@ async def mark_done(callback: types.CallbackQuery):
         habit_id
     )
 
-    streak = habit["streak"]
     last = habit["last_completed"]
+    streak = habit["streak"]
 
     if last == today - timedelta(days=1):
         streak += 1
     else:
         streak = 1
 
-    # Запись лога
     await db.execute(
         "INSERT INTO habit_logs (habit_id, date) VALUES ($1, $2)",
         habit_id, today
     )
 
-    # Обновление привычки
     await db.execute(
         """
         UPDATE habits
@@ -177,13 +173,14 @@ async def mark_done(callback: types.CallbackQuery):
 
     await callback.answer(f"🔥 Серия: {streak} дней", show_alert=True)
 
+
 # =========================
 # STARTUP
 # =========================
 
 async def on_startup(dp):
     await init_db()
-    print("✅ Bot started and DB initialized")
+    print("✅ Bot started with inline buttons and streaks")
 
 
 if __name__ == "__main__":
