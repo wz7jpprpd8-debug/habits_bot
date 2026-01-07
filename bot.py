@@ -2,15 +2,12 @@ import asyncio
 import asyncpg
 
 from aiogram import Bot, Dispatcher
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
+from aiogram.utils import executor
 
-from config import BOT_TOKEN, DATABASE_URL
-from handlers import start, habits, ai_analysis
-
-
-# -------------------------
-# Инициализация бота
-# -------------------------
 bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(bot)
+dp.middleware.setup(LoggingMiddleware())
 dp = Dispatcher()
 
 dp.include_router(start.router)
