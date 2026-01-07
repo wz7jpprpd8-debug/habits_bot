@@ -2,7 +2,7 @@ services:
   - type: worker
     name: habit-tracker-bot
     env: python
-    plan: starter   # или free если доступен
+    plan: free   # или starter если доступен
     pythonVersion: 3.11
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
