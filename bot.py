@@ -4,6 +4,7 @@ from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import date
+from datetime import timedelta
 
 from config import BOT_TOKEN, DATABASE_URL
 
@@ -122,7 +123,59 @@ async def ai_stub(message: types.Message):
         "🧠 AI-анализ будет подключён следующим шагом.\n"
         "Сейчас проверяем стабильный запуск 😉"
     )
+@dp.callback_query_handler(lambda c: c.data.startswith("done:"))
+async def mark_done(callback: types.CallbackQuery):
+    habit_id = int(callback.data.split(":")[1])
+    today = date.today()
 
+    db = await get_db()
+
+    # Проверка: уже отмечено сегодня?
+    exists = await db.fetchrow(
+        """
+        SELECT 1 FROM habit_logs
+        WHERE habit_id = $1 AND date = $2
+        """,
+        habit_id, today
+    )
+
+    if exists:
+        await callback.answer("❌ Уже отмечено сегодня", show_alert=True)
+        await db.close()
+        return
+
+    habit = await db.fetchrow(
+        "SELECT streak, last_completed FROM habits WHERE id=$1",
+        habit_id
+    )
+
+    streak = habit["streak"]
+    last = habit["last_completed"]
+
+    if last == today - timedelta(days=1):
+        streak += 1
+    else:
+        streak = 1
+
+    # Запись лога
+    await db.execute(
+        "INSERT INTO habit_logs (habit_id, date) VALUES ($1, $2)",
+        habit_id, today
+    )
+
+    # Обновление привычки
+    await db.execute(
+        """
+        UPDATE habits
+        SET streak=$1, last_completed=$2
+        WHERE id=$3
+        """,
+        streak, today, habit_id
+    )
+
+    await db.close()
+
+    await callback.answer(f"🔥 Серия: {streak} дней", show_alert=True)
 
 # =========================
 # STARTUP
