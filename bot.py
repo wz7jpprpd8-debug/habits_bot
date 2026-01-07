@@ -2,16 +2,18 @@ import asyncio
 import asyncpg
 
 from aiogram import Bot, Dispatcher
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
+from aiogram.utils import executor
+
 from config import BOT_TOKEN, DATABASE_URL
-from handlers import start, habits, ai_analysis
+import handlers.start
+import handlers.habits
+import handlers.ai_analysis
 
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-
-dp.include_router(start.router)
-dp.include_router(habits.router)
-dp.include_router(ai_analysis.router)
+dp = Dispatcher(bot)
+dp.middleware.setup(LoggingMiddleware())
 
 
 async def init_db():
@@ -21,10 +23,10 @@ async def init_db():
     await conn.close()
 
 
-async def main():
+async def on_startup(dp):
     await init_db()
-    await dp.start_polling(bot)
+    print("✅ Bot started")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
