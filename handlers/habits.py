@@ -2,6 +2,8 @@ from aiogram import types
 from aiogram.dispatcher import Dispatcher
 from database import get_db
 
+ALTER TABLE habits ADD COLUMN IF NOT EXISTS streak INT DEFAULT 0;
+ALTER TABLE habits ADD COLUMN IF NOT EXISTS last_completed DATE;
 
 def register_habits(dp: Dispatcher):
 
