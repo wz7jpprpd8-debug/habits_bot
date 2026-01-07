@@ -1,39 +1,36 @@
+import os
 import asyncpg
-from datetime import date, timedelta
 import tempfile
-
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from datetime import date, timedelta, datetime
+
 from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.utils import executor
+
 from openai import OpenAI
-from datetime import datetime, timedelta
-
-last_ai_call = {}
-
-from config import BOT_TOKEN, DATABASE_URL
 
 
 # =========================
-# INIT
+# CONFIG
 # =========================
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
-client = OpenAI()
-import os
-
-
-
 dp.middleware.setup(LoggingMiddleware())
+
+client = OpenAI()
+
+last_ai_call = {}
 
 
 # =========================
-# DB HELPERS
+# DB
 # =========================
 
 async def get_db():
@@ -72,6 +69,7 @@ async def start_cmd(message: types.Message):
         "/add Название привычки\n"
         "/list — список привычек\n"
         "/stats — статистика\n"
+        "/analysis — AI-анализ\n"
     )
 
 
@@ -147,7 +145,7 @@ async def stats_cmd(message: types.Message):
     )
 
     if not habits:
-        await message.answer("У тебя пока нет привычек 😔")
+        await message.answer("Нет данных для статистики")
         await db.close()
         return
 
@@ -159,7 +157,7 @@ async def stats_cmd(message: types.Message):
         SELECT date, COUNT(*) as cnt
         FROM habit_logs
         WHERE habit_id = ANY($1::int[])
-          AND date BETWEEN $2 AND $3
+        AND date BETWEEN $2 AND $3
         GROUP BY date
         ORDER BY date
         """,
@@ -172,18 +170,6 @@ async def stats_cmd(message: types.Message):
     values = {row["date"]: row["cnt"] for row in logs}
     counts = [values.get(d, 0) for d in days]
 
-    max_possible = len(habits) * 7
-    completed = sum(counts)
-    percent = int((completed / max_possible) * 100)
-
-    await message.answer(
-        "📊 <b>Статистика за 7 дней</b>\n\n"
-        f"📌 Привычек: {len(habits)}\n"
-        f"✅ Выполнений: {completed}/{max_possible}\n"
-        f"📈 Выполнение: {percent}%",
-        parse_mode="HTML"
-    )
-
     plt.figure()
     plt.plot([d.strftime("%d.%m") for d in days], counts, marker="o")
     plt.grid(True)
@@ -195,116 +181,83 @@ async def stats_cmd(message: types.Message):
     await message.answer_photo(open(tmp.name, "rb"))
     await db.close()
 
+
+# =========================
+# AI ANALYSIS
+# =========================
+
 @dp.message_handler(commands=["analysis"])
 async def ai_analysis(message: types.Message):
-    db = await get_db()
-
     uid = message.from_user.id
-now = datetime.utcnow()
+    now = datetime.utcnow()
 
-if uid in last_ai_call and now - last_ai_call[uid] < timedelta(minutes=10):
-    await message.answer("⏳ Анализ можно запрашивать раз в 10 минут")
-    return
+    if uid in last_ai_call and now - last_ai_call[uid] < timedelta(minutes=10):
+        await message.answer("⏳ Анализ можно запрашивать раз в 10 минут")
+        return
 
-last_ai_call[uid] = now
+    last_ai_call[uid] = now
 
+    db = await get_db()
     habits = await db.fetch(
         """
-        SELECT h.id, h.title
+        SELECT h.title, h.streak
         FROM habits h
         JOIN users u ON h.user_id = u.id
         WHERE u.telegram_id=$1 AND h.is_active=TRUE
         """,
-        message.from_user.id
+        uid
     )
 
     if not habits:
-        await message.answer("Нет данных для анализа 😔")
+        await message.answer("Нет данных для анализа")
         await db.close()
         return
 
-    today = date.today()
-    start = today - timedelta(days=13)
-
-    logs = await db.fetch(
-        """
-        SELECT h.title, l.date
-        FROM habit_logs l
-        JOIN habits h ON h.id = l.habit_id
-        WHERE l.habit_id = ANY($1::int[])
-          AND l.date BETWEEN $2 AND $3
-        ORDER BY l.date
-        """,
-        [h["id"] for h in habits],
-        start,
-        today
-    )
-
-    total_days = 14
-    habit_count = len(habits)
-    completed = len(logs)
-    max_possible = habit_count * total_days
-    percent = int((completed / max_possible) * 100)
-
-    by_habit = {}
-    for row in logs:
-        by_habit.setdefault(row["title"], 0)
-        by_habit[row["title"]] += 1
-
     summary = "\n".join(
-        f"- {k}: {v}/{total_days} дней"
-        for k, v in by_habit.items()
+        f"- {h['title']}: серия {h['streak']} дней"
+        for h in habits
     )
 
     prompt = f"""
-Ты — коуч по формированию привычек.
+Ты коуч по формированию привычек.
 
-Данные пользователя за 14 дней:
-- Привычек: {habit_count}
-- Выполнений: {completed}/{max_possible}
-- Процент выполнения: {percent}%
-
-По привычкам:
+Привычки пользователя:
 {summary}
 
-Сделай:
-1. Краткий вывод (1–2 предложения)
-2. 2 конкретных совета
-3. Один риск, на который стоит обратить внимание
+Ответь строго в формате:
 
-Пиши кратко, по делу, без воды.
+Итог:
+(1–2 предложения)
+
+Советы:
+- совет 1
+- совет 2
+
+Риск:
+- один риск
 """
 
-await message.answer("🧠 Анализирую твои привычки...")
+    await message.answer("🧠 Анализирую привычки...")
 
-try:
-    response = client.responses.create(
-        model="gpt-4.1-mini",
-        input=prompt
-    )
+    try:
+        response = client.responses.create(
+            model="gpt-4.1-mini",
+            input=prompt
+        )
+        await message.answer(response.output_text)
 
-    await message.answer(response.output_text)
-
-except Exception as e:
-    await message.answer(
-        "⚠️ Не удалось выполнить AI-анализ. Попробуй позже."
-    )
-    print("AI ERROR:", e)
+    except Exception as e:
+        await message.answer("⚠️ AI временно недоступен")
+        print("AI ERROR:", e)
 
     await db.close()
-    
-from openai import OpenAI
-client = OpenAI()
 
-
-
-        
 
 # =========================
 # CALLBACKS
 # =========================
 
-@dp.callback_query_handler(lambda c: c.data and c.data.split(":")[0] == "done")
+@dp.callback_query_handler(lambda c: c.data.startswith("done:"))
 async def mark_done(callback: types.CallbackQuery):
     habit_id = int(callback.data.split(":")[1])
     today = date.today()
@@ -317,7 +270,7 @@ async def mark_done(callback: types.CallbackQuery):
     )
 
     if exists:
-        await callback.answer("❌ Уже отмечено сегодня", show_alert=True)
+        await callback.answer("Уже отмечено сегодня")
         await db.close()
         return
 
@@ -326,8 +279,8 @@ async def mark_done(callback: types.CallbackQuery):
         habit_id
     )
 
-    last = habit["last_completed"]
     streak = habit["streak"]
+    last = habit["last_completed"]
 
     if last == today - timedelta(days=1):
         streak += 1
@@ -340,7 +293,11 @@ async def mark_done(callback: types.CallbackQuery):
     )
 
     await db.execute(
-        "UPDATE habits SET streak=$1, last_completed=$2 WHERE id=$3",
+        """
+        UPDATE habits
+        SET streak=$1, last_completed=$2
+        WHERE id=$3
+        """,
         streak, today, habit_id
     )
 
