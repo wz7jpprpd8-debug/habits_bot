@@ -5,6 +5,9 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
+import matplotlib.pyplot as plt
+import tempfile
+from datetime import date, timedelta
 
 from config import BOT_TOKEN, DATABASE_URL
 
@@ -118,7 +121,76 @@ async def list_habits(message: types.Message):
         )
 
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
+import matplotlib.pyplot as plt
+import tempfile
+from datetime import date, timedelta
 
+
+@dp.message_handler(commands=["stats"])
+async def stats_cmd(message: types.Message):
+    user_id = message.from_user.id
+    db = await get_db()
+
+    habits = await db.fetch(
+        "SELECT id, title FROM habits WHERE user_id=$1 AND is_active=TRUE",
+        user_id
+    )
+
+    if not habits:
+        await message.answer("У тебя пока нет привычек 😔")
+        await db.close()
+        return
+
+    today = date.today()
+    start = today - timedelta(days=6)
+
+    logs = await db.fetch(
+        """
+        SELECT date, COUNT(*) as cnt
+        FROM habit_logs
+        WHERE habit_id = ANY($1::int[])
+          AND date BETWEEN $2 AND $3
+        GROUP BY date
+        ORDER BY date
+        """,
+        [h["id"] for h in habits],
+        start,
+        today
+    )
+
+    days = [(start + timedelta(days=i)) for i in range(7)]
+    values = {row["date"]: row["cnt"] for row in logs}
+    counts = [values.get(d, 0) for d in days]
+
+    max_possible = len(habits) * 7
+    completed = sum(counts)
+    percent = int((completed / max_possible) * 100) if max_possible else 0
+
+    # Текст
+    text = (
+        "📊 <b>Статистика за 7 дней</b>\n\n"
+        f"📌 Привычек: {len(habits)}\n"
+        f"✅ Выполнений: {completed}/{max_possible}\n"
+        f"📈 Выполнение: {percent}%"
+    )
+
+    await message.answer(text, parse_mode="HTML")
+
+    # График
+    plt.figure()
+    plt.plot([d.strftime("%d.%m") for d in days], counts, marker="o")
+    plt.title("Выполненные привычки")
+    plt.xlabel("День")
+    plt.ylabel("Кол-во")
+    plt.grid(True)
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    plt.savefig(tmp.name)
+    plt.close()
+
+    await message.answer_photo(open(tmp.name, "rb"))
+
+    await db.close()
 
 # =========================
 # CALLBACKS
