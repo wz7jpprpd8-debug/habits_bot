@@ -39,11 +39,6 @@ async def init_db():
 # COMMANDS
 # =========================
 
-@dp.callback_query_handler()
-async def debug_any_callback(callback: types.CallbackQuery):
-    print("DEBUG CALLBACK:", callback.data)
-    await callback.answer("callback пойман")
-
 
 @dp.message_handler(commands=["start"])
 async def start_cmd(message: types.Message):
@@ -129,7 +124,7 @@ async def list_habits(message: types.Message):
 # CALLBACKS
 # =========================
 
-@dp.callback_query_handler(lambda c: c.data.startswith("done:"))
+@dp.callback_query_handler(lambda c: c.data and c.data.split(":")[0] == "done")
 async def mark_done(callback: types.CallbackQuery):
     habit_id = int(callback.data.split(":")[1])
     today = date.today()
