@@ -1,18 +1,18 @@
 import asyncpg
 from datetime import date, timedelta
+import tempfile
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
-import matplotlib.pyplot as plt
-import tempfile
-from datetime import date, timedelta
 
 from config import BOT_TOKEN, DATABASE_URL
 
-
-    
 
 # =========================
 # INIT
@@ -42,7 +42,6 @@ async def init_db():
 # COMMANDS
 # =========================
 
-
 @dp.message_handler(commands=["start"])
 async def start_cmd(message: types.Message):
     db = await get_db()
@@ -63,6 +62,7 @@ async def start_cmd(message: types.Message):
         "Команды:\n"
         "/add Название привычки\n"
         "/list — список привычек\n"
+        "/stats — статистика\n"
     )
 
 
@@ -121,19 +121,20 @@ async def list_habits(message: types.Message):
         )
 
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
-import matplotlib.pyplot as plt
-import tempfile
-from datetime import date, timedelta
 
 
 @dp.message_handler(commands=["stats"])
 async def stats_cmd(message: types.Message):
-    user_id = message.from_user.id
     db = await get_db()
 
     habits = await db.fetch(
-        "SELECT id, title FROM habits WHERE user_id=$1 AND is_active=TRUE",
-        user_id
+        """
+        SELECT h.id
+        FROM habits h
+        JOIN users u ON h.user_id = u.id
+        WHERE u.telegram_id=$1 AND h.is_active=TRUE
+        """,
+        message.from_user.id
     )
 
     if not habits:
@@ -158,30 +159,24 @@ async def stats_cmd(message: types.Message):
         today
     )
 
-    days = [(start + timedelta(days=i)) for i in range(7)]
+    days = [start + timedelta(days=i) for i in range(7)]
     values = {row["date"]: row["cnt"] for row in logs}
     counts = [values.get(d, 0) for d in days]
 
     max_possible = len(habits) * 7
     completed = sum(counts)
-    percent = int((completed / max_possible) * 100) if max_possible else 0
+    percent = int((completed / max_possible) * 100)
 
-    # Текст
-    text = (
+    await message.answer(
         "📊 <b>Статистика за 7 дней</b>\n\n"
         f"📌 Привычек: {len(habits)}\n"
         f"✅ Выполнений: {completed}/{max_possible}\n"
-        f"📈 Выполнение: {percent}%"
+        f"📈 Выполнение: {percent}%",
+        parse_mode="HTML"
     )
 
-    await message.answer(text, parse_mode="HTML")
-
-    # График
     plt.figure()
     plt.plot([d.strftime("%d.%m") for d in days], counts, marker="o")
-    plt.title("Выполненные привычки")
-    plt.xlabel("День")
-    plt.ylabel("Кол-во")
     plt.grid(True)
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
@@ -189,8 +184,8 @@ async def stats_cmd(message: types.Message):
     plt.close()
 
     await message.answer_photo(open(tmp.name, "rb"))
-
     await db.close()
+
 
 # =========================
 # CALLBACKS
@@ -203,12 +198,8 @@ async def mark_done(callback: types.CallbackQuery):
 
     db = await get_db()
 
-    # Уже отмечено сегодня?
     exists = await db.fetchrow(
-        """
-        SELECT 1 FROM habit_logs
-        WHERE habit_id=$1 AND date=$2
-        """,
+        "SELECT 1 FROM habit_logs WHERE habit_id=$1 AND date=$2",
         habit_id, today
     )
 
@@ -236,16 +227,11 @@ async def mark_done(callback: types.CallbackQuery):
     )
 
     await db.execute(
-        """
-        UPDATE habits
-        SET streak=$1, last_completed=$2
-        WHERE id=$3
-        """,
+        "UPDATE habits SET streak=$1, last_completed=$2 WHERE id=$3",
         streak, today, habit_id
     )
 
     await db.close()
-
     await callback.answer(f"🔥 Серия: {streak} дней", show_alert=True)
 
 
@@ -255,7 +241,7 @@ async def mark_done(callback: types.CallbackQuery):
 
 async def on_startup(dp):
     await init_db()
-    print("✅ Bot started with inline buttons and streaks")
+    print("✅ Bot started with inline buttons, streaks and stats")
 
 
 if __name__ == "__main__":
