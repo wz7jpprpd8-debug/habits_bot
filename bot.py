@@ -8,6 +8,11 @@ from aiogram.utils import executor
 
 from config import BOT_TOKEN, DATABASE_URL
 
+@dp.callback_query_handler()
+async def debug_any_callback(callback: types.CallbackQuery):
+    print("DEBUG CALLBACK:", callback.data)
+    await callback.answer("callback пойман")
+    
 
 # =========================
 # INIT
