@@ -3,7 +3,6 @@ services:
     name: habit-tracker-bot
     runtime: python
     plan: starter
-    pythonVersion: 3.11
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     autoDeploy: true
