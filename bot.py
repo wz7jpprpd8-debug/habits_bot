@@ -11,6 +11,9 @@ from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 from openai import OpenAI
+from datetime import datetime, timedelta
+
+last_ai_call = {}
 
 from config import BOT_TOKEN, DATABASE_URL
 
@@ -23,7 +26,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 client = OpenAI()
 import os
-print("OPENAI KEY PREFIX:", os.getenv("OPENAI_API_KEY", "")[:5])
+
 
 
 dp.middleware.setup(LoggingMiddleware())
@@ -196,6 +199,15 @@ async def stats_cmd(message: types.Message):
 async def ai_analysis(message: types.Message):
     db = await get_db()
 
+    uid = message.from_user.id
+now = datetime.utcnow()
+
+if uid in last_ai_call and now - last_ai_call[uid] < timedelta(minutes=10):
+    await message.answer("⏳ Анализ можно запрашивать раз в 10 минут")
+    return
+
+last_ai_call[uid] = now
+
     habits = await db.fetch(
         """
         SELECT h.id, h.title
@@ -263,8 +275,9 @@ async def ai_analysis(message: types.Message):
 Пиши кратко, по делу, без воды.
 """
 
-    await message.answer("🧠 Анализирую твои привычки...")
+await message.answer("🧠 Анализирую твои привычки...")
 
+try:
     response = client.responses.create(
         model="gpt-4.1-mini",
         input=prompt
@@ -272,27 +285,19 @@ async def ai_analysis(message: types.Message):
 
     await message.answer(response.output_text)
 
+except Exception as e:
+    await message.answer(
+        "⚠️ Не удалось выполнить AI-анализ. Попробуй позже."
+    )
+    print("AI ERROR:", e)
+
     await db.close()
     
 from openai import OpenAI
 client = OpenAI()
 
 
-@dp.message_handler(commands=["aitest"])
-async def ai_test(message: types.Message):
-    try:
-        print("DEBUG: aitest called")
 
-        response = client.responses.create(
-            model="gpt-4.1-mini",
-            input="Ответь словом OK"
-        )
-
-        await message.answer(response.output_text)
-
-    except Exception as e:
-        await message.answer(f"AI ERROR: {e}")
-        print("AI ERROR:", e)
         
 
 # =========================
