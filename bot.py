@@ -451,6 +451,15 @@ async def send_reminders():
 
     await db.close()
 
+Jan 8, 2026 at 5:39 PM
+Starting Container
+BOT_TOKEN = 8083796484:AAGV9BjrG7oztBxnnPoAKkRe-nUEqJ7m4Fw
+DATABASE_URL = postgresql://postgres:mlGTMIszkqMvfRZTfHsHaPYdSjdzeBWb@nozomi.proxy.rlwy.net:12708/railway
+Updates were skipped successfully.
+✅ Bot started with habits, AI, stats and reminders
+WEBAPP_URL = https://storied-bubblegum-a94e6a.netlify.app
+
+
 
 # =========================
 # STARTUP
