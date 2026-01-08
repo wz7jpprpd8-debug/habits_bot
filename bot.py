@@ -81,6 +81,15 @@ async def get_db():
 
 routes = web.RouteTableDef()
 
+@routes.post("/api/habits")
+async def api_habits(request):
+    data = await request.json()
+    uid = data["user_id"]
+
+    print("API /habits called, user_id =", uid)  # ← ВАЖНО
+
+    ...
+
 
 @routes.post("/api/habits")
 async def api_habits(request):
