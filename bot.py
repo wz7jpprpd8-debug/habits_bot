@@ -9,6 +9,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    WebAppInfo,
     ReplyKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardRemove,
@@ -92,6 +93,7 @@ async def init_db():
 # START
 # =========================
 
+
 @dp.message_handler(commands=["start"])
 async def start_cmd(message: types.Message):
     db = await get_db()
@@ -106,10 +108,21 @@ async def start_cmd(message: types.Message):
     )
     await db.close()
 
+    kb = InlineKeyboardMarkup()
+    kb.add(
+        InlineKeyboardButton(
+            text="📱 Открыть приложение",
+            web_app=WebAppInfo(
+                url="https://storied-bubblegum-a94e6a.netlify.app"
+            )
+        )
+    )
+
     await message.answer(
         "👋 Привет!\n\n"
-        "Я помогу выработать полезные привычки 👇",
-        reply_markup=main_menu,
+        "Это твой трекер привычек.\n"
+        "Открывай приложение 👇",
+        reply_markup=kb,
     )
 
 
