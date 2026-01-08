@@ -9,6 +9,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.utils import executor
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from openai import OpenAI
 
@@ -22,6 +23,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
+scheduler = AsyncIOScheduler()
 dp.middleware.setup(LoggingMiddleware())
 
 client = OpenAI()
@@ -304,7 +306,30 @@ async def mark_done(callback: types.CallbackQuery):
     await db.close()
     await callback.answer(f"🔥 Серия: {streak} дней", show_alert=True)
 
+async def send_reminders():
+    now = datetime.utcnow().time().replace(second=0, microsecond=0)
 
+    db = await get_db()
+    users = await db.fetch(
+        """
+        SELECT telegram_id
+        FROM users
+        WHERE reminder_time = $1
+        """,
+        now
+    )
+
+    for u in users:
+        try:
+            await bot.send_message(
+                u["telegram_id"],
+                "⏰ Напоминание!\nТы отметил привычки сегодня?"
+            )
+        except Exception as e:
+            print("Reminder error:", e)
+
+    await db.close()
+    
 # =========================
 # STARTUP
 # =========================
