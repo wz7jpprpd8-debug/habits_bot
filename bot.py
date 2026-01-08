@@ -37,11 +37,6 @@ dp = Dispatcher(bot)
 scheduler = AsyncIOScheduler()
 ai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-print("BOT_TOKEN =", BOT_TOKEN)
-print("DATABASE_URL =", DATABASE_URL)
-
-user_states = {}
-
 
 # =========================
 # DB
@@ -149,39 +144,16 @@ async def start_cmd(message: types.Message):
 
 @dp.message_handler(lambda m: m.text == "➕ Добавить привычку")
 async def add_habit_prompt(message: types.Message):
-    user_states[message.from_user.id] = "waiting_habit"
     await message.answer("✏️ Напиши название привычки")
 
 
-@dp.message_handler()
-async def add_habit(message: types.Message):
-    if user_states.get(message.from_user.id) != "waiting_habit":
-        return
-
-    title = message.text.strip()
-    if len(title) < 2:
-        await message.answer("Название слишком короткое")
-        return
-
-    db = await get_db()
-    user = await db.fetchrow(
-        "SELECT id FROM users WHERE telegram_id=$1",
-        message.from_user.id,
-    )
-
-    await db.execute(
-        "INSERT INTO habits (user_id, title) VALUES ($1, $2)",
-        user["id"],
-        title,
-    )
-    await db.close()
-
-    user_states.pop(message.from_user.id, None)
-
-    await message.answer(
-        f"✅ Привычка «{title}» добавлена",
-        reply_markup=main_kb(),
-    )
+@dp.message_handler(lambda m: m.text not in [
+    "➕ Добавить привычку",
+    "📋 Мои привычки",
+    "📊 Статистика",
+    "🧠 AI-анализ",
+    "⏰ Напоминания",
+] and not m.text.startswith("/"))
 async def add_habit(message: types.Message):
     title = message.text.strip()
     if len(title) < 2:
@@ -476,118 +448,6 @@ async def send_reminders():
 
     await db.close()
 
-from aiohttp import web
-import pathlib
-
-BASE_DIR = pathlib.Path(__file__).parent
-routes = web.RouteTableDef()
-
-
-@routes.get("/")
-async def index(request):
-    return web.FileResponse(BASE_DIR / "index.html")
-
-
-@routes.post("/api/habits")
-async def api_habits(request):
-    data = await request.json()
-    telegram_id = data.get("telegram_id")
-
-    db = await get_db()
-    rows = await db.fetch("""
-        SELECT h.id, h.title, h.streak
-        FROM habits h
-        JOIN users u ON h.user_id=u.id
-        WHERE u.telegram_id=$1 AND h.is_active=TRUE
-        ORDER BY h.id
-    """, telegram_id)
-    await db.close()
-
-    return web.json_response([
-        dict(id=r["id"], title=r["title"], streak=r["streak"])
-        for r in rows
-    ])
-
-
-@routes.post("/api/add")
-async def api_add(request):
-    data = await request.json()
-    telegram_id = data["telegram_id"]
-    title = data["title"]
-
-    db = await get_db()
-    user = await db.fetchrow(
-        "SELECT id FROM users WHERE telegram_id=$1",
-        telegram_id,
-    )
-
-    await db.execute(
-        "INSERT INTO habits (user_id, title) VALUES ($1, $2)",
-        user["id"], title
-    )
-    await db.close()
-
-    return web.json_response({"ok": True})
-
-
-@routes.post("/api/done")
-async def api_done(request):
-    data = await request.json()
-    habit_id = data["habit_id"]
-
-    today = date.today()
-    db = await get_db()
-
-    habit = await db.fetchrow(
-        "SELECT streak, last_completed FROM habits WHERE id=$1",
-        habit_id
-    )
-
-    streak = habit["streak"] + 1 if habit["last_completed"] == today - timedelta(days=1) else 1
-
-    await db.execute(
-        "UPDATE habits SET streak=$1, last_completed=$2 WHERE id=$3",
-        streak, today, habit_id
-    )
-
-    await db.execute(
-        "INSERT INTO habit_logs (habit_id, date) VALUES ($1, $2)",
-        habit_id, today
-    )
-
-    await db.close()
-    return web.json_response({"ok": True})
-
-
-@routes.post("/api/delete")
-async def api_delete(request):
-    data = await request.json()
-    habit_id = data["habit_id"]
-
-    db = await get_db()
-    await db.execute(
-        "UPDATE habits SET is_active=FALSE WHERE id=$1",
-        habit_id
-    )
-    await db.close()
-
-    return web.json_response({"ok": True})
-
-
-async def start_web():
-    app = web.Application()
-    app.add_routes(routes)
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-
-    port = int(os.getenv("PORT", 8000))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-
-    print(f"🌐 Web server started on port {port}")
-
-
 
 # =========================
 # STARTUP
@@ -597,5 +457,13 @@ async def on_startup(_):
     await init_db()
     scheduler.add_job(send_reminders, "interval", minutes=1)
     scheduler.start()
-    await start_web()
-    print("✅ Bot + Mini App backend started")
+    print("✅ Bot started with habits, AI, stats and reminders")
+    print("WEBAPP_URL =", WEBAPP_URL)
+
+
+if __name__ == "__main__":
+    executor.start_polling(
+        dp,
+        skip_updates=True,
+        on_startup=on_startup,
+    )
