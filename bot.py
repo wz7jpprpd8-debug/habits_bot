@@ -11,8 +11,12 @@ from aiogram.types import (
     InlineKeyboardButton,
     ReplyKeyboardMarkup,
     KeyboardButton,
+    ReplyKeyboardRemove,
 )
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.utils import executor
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -28,14 +32,21 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher(bot, storage=MemoryStorage())
 dp.middleware.setup(LoggingMiddleware())
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 scheduler = AsyncIOScheduler()
 
-waiting_for_habit_name = set()
-last_ai_call = set()
+
+# =========================
+# FSM
+# ——————————
+
+class AddHabitFSM(StatesGroup):
+    title = State()
+    reminder_choice = State()
+    reminder_time = State()
 
 
 # =========================
@@ -90,25 +101,70 @@ async def start_cmd(message: types.Message):
     await db.close()
 
     await message.answer(
-        "👋 Привет! Я бот для трекинга привычек 👇",
+        "👋 Привет!\n\n"
+        "Я помогу выработать полезные привычки 👇",
         reply_markup=main_menu,
     )
 
 
 # =========================
-# ADD HABIT
+# ADD HABIT — FSM WIZARD
 # =========================
 
 @dp.message_handler(lambda m: m.text == "➕ Добавить привычку")
-async def add_habit_button(message: types.Message):
-    waiting_for_habit_name.add(message.from_user.id)
-    await message.answer("✏️ Напиши название привычки")
+async def add_habit_start(message: types.Message):
+    await AddHabitFSM.title.set()
+    await message.answer(
+        "✏️ Введите название привычки",
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
 
-@dp.message_handler(lambda m: m.from_user.id in waiting_for_habit_name)
-async def catch_habit_name(message: types.Message):
-    title = message.text.strip()
-    waiting_for_habit_name.remove(message.from_user.id)
+@dp.message_handler(state=AddHabitFSM.title)
+async def add_habit_title(message: types.Message, state: FSMContext):
+    await state.update_data(title=message.text.strip())
+
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("⏰ Да", "❌ Нет")
+
+    await AddHabitFSM.reminder_choice.set()
+    await message.answer(
+        "⏰ Нужны напоминания?",
+        reply_markup=kb,
+    )
+
+
+@dp.message_handler(state=AddHabitFSM.reminder_choice)
+async def add_habit_reminder_choice(message: types.Message, state: FSMContext):
+    if message.text == "❌ Нет":
+        await save_habit(state, message)
+        return
+
+    if message.text == "⏰ Да":
+        await AddHabitFSM.reminder_time.set()
+        await message.answer(
+            "Введите время (например 21:00)",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+
+    await message.answer("Пожалуйста, выберите кнопкой 👇")
+
+
+@dp.message_handler(state=AddHabitFSM.reminder_time)
+async def add_habit_reminder_time(message: types.Message, state: FSMContext):
+    try:
+        t = datetime.strptime(message.text, "%H:%M").time()
+    except:
+        await message.answer("❌ Формат HH:MM (пример: 21:00)")
+        return
+
+    await state.update_data(reminder_time=t)
+    await save_habit(state, message)
+
+
+async def save_habit(state: FSMContext, message: types.Message):
+    data = await state.get_data()
 
     db = await get_db()
     user = await db.fetchrow(
@@ -117,59 +173,58 @@ async def catch_habit_name(message: types.Message):
     )
 
     await db.execute(
-        "INSERT INTO habits (user_id, title) VALUES ($1, $2)",
+        """
+        INSERT INTO habits (user_id, title, reminder_time)
+        VALUES ($1, $2, $3)
+        """,
         user["id"],
-        title,
+        data["title"],
+        data.get("reminder_time"),
     )
     await db.close()
 
+    await state.finish()
     await message.answer(
-        f"✅ Привычка «{title}» добавлена",
+        f"✅ Привычка «{data['title']}» добавлена",
         reply_markup=main_menu,
     )
 
 
 # =========================
-# LIST HABITS
+# LIST + DELETE + DONE
 # =========================
 
-@dp.message_handler(lambda m: m.text == "📋 Мои привычки" or m.text == "/list")
+@dp.message_handler(lambda m: m.text == "📋 Мои привычки")
 async def list_habits(message: types.Message):
     db = await get_db()
     rows = await db.fetch(
         """
         SELECT h.id, h.title, h.streak
         FROM habits h
-        JOIN users u ON h.user_id = u.id
+        JOIN users u ON h.user_id=u.id
         WHERE u.telegram_id=$1 AND h.is_active=TRUE
-        ORDER BY h.created_at
         """,
         message.from_user.id,
     )
     await db.close()
 
     if not rows:
-        await message.answer("У тебя пока нет привычек")
+        await message.answer("Пока нет привычек")
         return
 
     for r in rows:
-        text = (
-            f"📌 <b>{r['title']}</b>\n"
-            f"🔥 Серия: {r['streak']} дней"
-        )
-
         kb = InlineKeyboardMarkup(row_width=2)
         kb.add(
             InlineKeyboardButton("✅ Выполнено", callback_data=f"done:{r['id']}"),
             InlineKeyboardButton("🗑 Удалить", callback_data=f"delete:{r['id']}"),
         )
 
-        await message.answer(text, reply_markup=kb, parse_mode="HTML")
+        await message.answer(
+            f"📌 <b>{r['title']}</b>\n🔥 Серия: {r['streak']}",
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
 
-
-# =========================
-# CALLBACKS
-# =========================
 
 @dp.callback_query_handler(lambda c: c.data.startswith("done:"))
 async def mark_done(callback: types.CallbackQuery):
@@ -177,6 +232,7 @@ async def mark_done(callback: types.CallbackQuery):
     today = date.today()
 
     db = await get_db()
+
     exists = await db.fetchrow(
         "SELECT 1 FROM habit_logs WHERE habit_id=$1 AND date=$2",
         habit_id,
@@ -193,16 +249,14 @@ async def mark_done(callback: types.CallbackQuery):
         habit_id,
     )
 
-    streak = habit["streak"]
-    last = habit["last_completed"]
-
-    streak = streak + 1 if last == today - timedelta(days=1) else 1
+    streak = habit["streak"] + 1 if habit["last_completed"] == today - timedelta(days=1) else 1
 
     await db.execute(
         "INSERT INTO habit_logs (habit_id, date) VALUES ($1, $2)",
         habit_id,
         today,
     )
+
     await db.execute(
         "UPDATE habits SET streak=$1, last_completed=$2 WHERE id=$3",
         streak,
@@ -211,15 +265,20 @@ async def mark_done(callback: types.CallbackQuery):
     )
 
     await db.close()
-    await callback.answer(f"🔥 Серия: {streak} дней", show_alert=True)
+    await callback.answer(f"🔥 Серия: {streak}", show_alert=True)
 
 
 @dp.callback_query_handler(lambda c: c.data.startswith("delete:"))
 async def delete_habit(callback: types.CallbackQuery):
     habit_id = int(callback.data.split(":")[1])
+
     db = await get_db()
-    await db.execute("UPDATE habits SET is_active=FALSE WHERE id=$1", habit_id)
+    await db.execute(
+        "UPDATE habits SET is_active=FALSE WHERE id=$1",
+        habit_id,
+    )
     await db.close()
+
     await callback.message.edit_text("🗑 Привычка удалена")
     await callback.answer("Удалено")
 
@@ -234,7 +293,8 @@ async def stats_cmd(message: types.Message):
 
     habits = await db.fetch(
         """
-        SELECT h.id FROM habits h
+        SELECT h.id
+        FROM habits h
         JOIN users u ON h.user_id=u.id
         WHERE u.telegram_id=$1 AND h.is_active=TRUE
         """,
@@ -242,7 +302,7 @@ async def stats_cmd(message: types.Message):
     )
 
     if not habits:
-        await message.answer("Нет данных для статистики")
+        await message.answer("Нет данных")
         await db.close()
         return
 
@@ -253,9 +313,10 @@ async def stats_cmd(message: types.Message):
         """
         SELECT date, COUNT(*) cnt
         FROM habit_logs
-        WHERE habit_id=ANY($1::int[])
+        WHERE habit_id = ANY($1::int[])
         AND date BETWEEN $2 AND $3
-        GROUP BY date ORDER BY date
+        GROUP BY date
+        ORDER BY date
         """,
         [h["id"] for h in habits],
         start,
@@ -263,7 +324,7 @@ async def stats_cmd(message: types.Message):
     )
 
     days = [start + timedelta(days=i) for i in range(7)]
-    values = {r["date"]: r["cnt"] for r in logs}
+    values = {row["date"]: row["cnt"] for row in logs}
     counts = [values.get(d, 0) for d in days]
 
     plt.figure()
@@ -284,16 +345,11 @@ async def stats_cmd(message: types.Message):
 
 @dp.message_handler(lambda m: m.text == "🧠 AI-анализ")
 async def ai_analysis(message: types.Message):
-    if message.from_user.id in last_ai_call:
-        await message.answer("⏳ Анализ доступен раз в сессию")
-        return
-
-    last_ai_call.add(message.from_user.id)
-
     db = await get_db()
     habits = await db.fetch(
         """
-        SELECT title, streak FROM habits h
+        SELECT title, streak
+        FROM habits h
         JOIN users u ON h.user_id=u.id
         WHERE u.telegram_id=$1 AND h.is_active=TRUE
         """,
@@ -305,9 +361,7 @@ async def ai_analysis(message: types.Message):
         await message.answer("Нет данных для анализа")
         return
 
-    summary = "\n".join(
-        f"- {h['title']}: серия {h['streak']} дней" for h in habits
-    )
+    summary = "\n".join(f"- {h['title']}: {h['streak']} дней" for h in habits)
 
     prompt = f"""
 Ты коуч по привычкам.
@@ -315,92 +369,45 @@ async def ai_analysis(message: types.Message):
 Привычки пользователя:
 {summary}
 
-Дай:
-Итог (1–2 предложения)
-2 совета
-1 риск
+Дай краткий анализ и 2 совета.
 """
 
     await message.answer("🧠 Анализирую...")
 
     try:
-        response = client.responses.create(
+        r = client.responses.create(
             model="gpt-4.1-mini",
             input=prompt,
         )
-        await message.answer(response.output_text)
+        await message.answer(r.output_text)
     except Exception as e:
-        await message.answer("⚠️ AI временно недоступен")
-        print("AI ERROR:", e)
+        await message.answer("AI временно недоступен")
+        print(e)
 
 
 # =========================
 # REMINDERS
 # =========================
 
-@dp.message_handler(lambda m: m.text == "⏰ Напоминания")
-async def reminder_help(message: types.Message):
-    await message.answer(
-        "⏰ Напоминания\n\n"
-        "Установи:\n"
-        "/timezone +3\n"
-        "/reminder 21:00"
-    )
-
-
-@dp.message_handler(commands=["timezone"])
-async def set_timezone(message: types.Message):
-    try:
-        offset = int(message.get_args())
-    except:
-        await message.answer("Пример: /timezone +3")
-        return
-
-    db = await get_db()
-    await db.execute(
-        "UPDATE users SET timezone_offset=$1 WHERE telegram_id=$2",
-        offset,
-        message.from_user.id,
-    )
-    await db.close()
-
-    await message.answer(f"🌍 Часовой пояс: UTC{offset:+}")
-
-
-@dp.message_handler(commands=["reminder"])
-async def set_reminder(message: types.Message):
-    try:
-        reminder_time = datetime.strptime(message.get_args(), "%H:%M").time()
-    except:
-        await message.answer("Формат: /reminder 21:00")
-        return
-
-    db = await get_db()
-    await db.execute(
-        "UPDATE users SET reminder_time=$1 WHERE telegram_id=$2",
-        reminder_time,
-        message.from_user.id,
-    )
-    await db.close()
-
-    await message.answer(f"⏰ Напоминание установлено на {reminder_time}")
-
-
 async def send_reminders():
-    now = datetime.utcnow()
-    db = await get_db()
+    now = datetime.utcnow().time().replace(second=0, microsecond=0)
 
+    db = await get_db()
     users = await db.fetch(
-        "SELECT telegram_id, reminder_time, timezone_offset FROM users WHERE reminder_time IS NOT NULL"
+        """
+        SELECT DISTINCT u.telegram_id
+        FROM users u
+        JOIN habits h ON h.user_id=u.id
+        WHERE h.reminder_time=$1 AND h.is_active=TRUE
+        """,
+        now,
     )
 
     for u in users:
-        local = (now + timedelta(hours=u["timezone_offset"])).time().replace(second=0)
-        if local == u["reminder_time"]:
-            await bot.send_message(
-                u["telegram_id"],
-                "⏰ Напоминание! Ты отметил привычки сегодня?",
-            )
+        await bot.send_message(
+            u["telegram_id"],
+            "⏰ Напоминание! Отметь привычки 👇",
+        )
 
     await db.close()
 
@@ -413,7 +420,7 @@ async def on_startup(dp):
     await init_db()
     scheduler.add_job(send_reminders, "interval", minutes=1)
     scheduler.start()
-    print("✅ Bot started successfully")
+    print("✅ Bot started")
 
 
 if __name__ == "__main__":
