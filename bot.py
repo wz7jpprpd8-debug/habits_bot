@@ -11,6 +11,7 @@ from aiogram.types import (
     KeyboardButton,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    WebAppInfo,
 )
 from aiogram.utils import executor
 
@@ -105,9 +106,32 @@ async def start_cmd(message: types.Message):
     )
     await db.close()
 
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+
+    kb.add(
+        KeyboardButton(
+            "🚀 Открыть приложение",
+            web_app=WebAppInfo(url=os.getenv("WEBAPP_URL"))
+        )
+    )
+
+    kb.add(
+        KeyboardButton("➕ Добавить привычку"),
+        KeyboardButton("📋 Мои привычки"),
+    )
+    kb.add(
+        KeyboardButton("📊 Статистика"),
+        KeyboardButton("🧠 AI-анализ"),
+    )
+    kb.add(
+        KeyboardButton("⏰ Напоминания"),
+    )
+
     await message.answer(
-        "👋 Привет!\nЯ бот для трекинга привычек 👇",
-        reply_markup=main_kb(),
+        "👋 Привет!\n\n"
+        "Это твой трекер привычек 👇\n"
+        "Открой приложение или пользуйся ботом",
+        reply_markup=kb,
     )
 
 
