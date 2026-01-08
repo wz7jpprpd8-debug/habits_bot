@@ -3,7 +3,7 @@ import asyncpg
 import tempfile
 import matplotlib.pyplot as plt
 
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import (
@@ -14,6 +14,7 @@ from aiogram.types import (
 )
 from aiogram.utils import executor
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import OpenAI
 
 
@@ -30,8 +31,8 @@ if not BOT_TOKEN or not DATABASE_URL:
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
-scheduler = AsyncIOScheduler()  # ← ВОТ ЗДЕСЬ
 
+scheduler = AsyncIOScheduler()
 ai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 
@@ -47,7 +48,10 @@ async def init_db():
     await db.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
-        telegram_id BIGINT UNIQUE
+        telegram_id BIGINT UNIQUE,
+        timezone_offset INT DEFAULT 0,
+        reminder_time TIME,
+        last_reminder DATE
     );
 
     CREATE TABLE IF NOT EXISTS habits (
@@ -81,6 +85,9 @@ def main_kb():
     kb.add(
         KeyboardButton("📊 Статистика"),
         KeyboardButton("🧠 AI-анализ"),
+    )
+    kb.add(
+        KeyboardButton("⏰ Напоминания"),
     )
     return kb
 
@@ -117,10 +124,10 @@ async def add_habit_prompt(message: types.Message):
     "📋 Мои привычки",
     "📊 Статистика",
     "🧠 AI-анализ",
-])
+    "⏰ Напоминания",
+] and not m.text.startswith("/"))
 async def add_habit(message: types.Message):
     title = message.text.strip()
-
     if len(title) < 2:
         return
 
@@ -320,12 +327,22 @@ async def ai_analysis(message: types.Message):
         print("AI ERROR:", e)
 
 
+# =========================
+# REMINDERS
+# =========================
+
+@dp.message_handler(lambda m: m.text == "⏰ Напоминания")
+async def reminder_help(message: types.Message):
+    await message.answer(
+        "⏰ Напоминания\n\n"
+        "/timezone +3 — часовой пояс\n"
+        "/reminder 21:00 — время напоминания",
+    )
+
 @dp.message_handler(commands=["timezone"])
 async def set_timezone(message: types.Message):
     try:
         offset = int(message.get_args())
-        if offset < -12 or offset > 14:
-            raise ValueError
     except:
         await message.answer("Пример: /timezone +3")
         return
@@ -337,8 +354,7 @@ async def set_timezone(message: types.Message):
     )
     await db.close()
 
-    sign = "+" if offset >= 0 else ""
-    await message.answer(f"🌍 Часовой пояс установлен: UTC{sign}{offset}")
+    await message.answer(f"🌍 Часовой пояс: UTC{offset:+}")
 
 @dp.message_handler(commands=["reminder"])
 async def set_reminder(message: types.Message):
@@ -369,21 +385,15 @@ async def send_reminders():
     """)
 
     for u in users:
-        # локальное время пользователя
         local_time = (
             utc_now + timedelta(hours=u["timezone_offset"])
         ).time().replace(second=0, microsecond=0)
 
-        # ❗ напоминание ровно в минуту
-        if local_time == u["reminder_time"]:
-            # ❗ не чаще 1 раза в день
-            if u["last_reminder"] == today:
-                continue
-
+        if local_time == u["reminder_time"] and u["last_reminder"] != today:
             try:
                 await bot.send_message(
                     u["telegram_id"],
-                    "⏰ Напоминание!\nТы отметил привычки сегодня? 👇",
+                    "⏰ Напоминание!\nТы отметил привычки сегодня?",
                 )
                 await db.execute(
                     "UPDATE users SET last_reminder=$1 WHERE telegram_id=$2",
@@ -395,26 +405,15 @@ async def send_reminders():
     await db.close()
 
 
-
 # =========================
 # STARTUP
 # =========================
 
 async def on_startup(_):
     await init_db()
-
-    scheduler.add_job(
-        send_reminders,
-        trigger="interval",
-        minutes=1,
-    )
+    scheduler.add_job(send_reminders, "interval", minutes=1)
     scheduler.start()
-
-    print("✅ Bot started with reminders")
-    
-async def on_startup(_):
-    await init_db()
-    print("✅ Bot started (habits + stats + AI)")
+    print("✅ Bot started with habits, stats, AI and reminders")
 
 if __name__ == "__main__":
     executor.start_polling(
