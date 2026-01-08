@@ -363,17 +363,32 @@ async def mark_done(callback: types.CallbackQuery):
     await callback.answer(f"🔥 Серия: {streak} дней", show_alert=True)
 
 async def send_reminders():
-    now = datetime.utcnow().time().replace(second=0, microsecond=0)
+    utc_now = datetime.utcnow()
 
     db = await get_db()
     users = await db.fetch(
         """
-        SELECT telegram_id
+        SELECT telegram_id, reminder_time, timezone_offset
         FROM users
-        WHERE reminder_time = $1
-        """,
-        now
+        WHERE reminder_time IS NOT NULL
+        """
     )
+
+    for u in users:
+        local_time = (
+            utc_now + timedelta(hours=u["timezone_offset"])
+        ).time().replace(second=0, microsecond=0)
+
+        if local_time == u["reminder_time"]:
+            try:
+                await bot.send_message(
+                    u["telegram_id"],
+                    "⏰ Напоминание!\nТы отметил привычки сегодня?"
+                )
+            except Exception as e:
+                print("Reminder error:", e)
+
+    await db.close()
 
     for u in users:
         try:
