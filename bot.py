@@ -152,7 +152,7 @@ async def list_habits(message: types.Message):
         WHERE u.telegram_id = $1 AND h.is_active = TRUE
         ORDER BY h.created_at
         """,
-        message.from_user.id,
+        message.from_user.id
     )
     await db.close()
 
@@ -166,18 +166,23 @@ async def list_habits(message: types.Message):
             f"🔥 Серия: {r['streak']} дней"
         )
 
-  kb = InlineKeyboardMarkup(row_width=2)
-kb.add(
-    InlineKeyboardButton(
-        "✅ Выполнено",
-        callback_data=f"done:{r['id']}"
-    ),
-    InlineKeyboardButton(
-        "🗑 Удалить",
-        callback_data=f"delete:{r['id']}"
-    )
-)
+        kb = InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            InlineKeyboardButton(
+                "✅ Выполнено",
+                callback_data=f"done:{r['id']}"
+            ),
+            InlineKeyboardButton(
+                "🗑 Удалить",
+                callback_data=f"delete:{r['id']}"
+            )
+        )
 
+        await message.answer(
+            text,
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
         await message.answer(
             text,
             reply_markup=kb,
