@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Habits</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+<style>
+body { font-family: system-ui; background:#f6f7f9; margin:0; padding:16px }
+h1 { margin-top:0 }
+input, button { width:100%; padding:12px; margin-top:8px; border-radius:10px; border:none }
+button { background:#2ea6ff; color:#fff; font-size:15px }
+.card { background:#fff; border-radius:12px; padding:14px; margin-top:12px }
+.row { display:flex; gap:8px; margin-top:8px }
+.danger { background:#ff4d4f }
+</style>
+</head>
+
+<body>
+<h1>📋 Мои привычки</h1>
+
+<input id="title" placeholder="Новая привычка">
+<button onclick="add()">➕ Добавить</button>
+
+<div id="habits">Загрузка…</div>
+
+<script>
+const tg = Telegram.WebApp;
+tg.ready();
+tg.expand();
+
+const uid = tg.initDataUnsafe.user.id;
+
+async function api(path, body={}) {
+  const r = await fetch(path, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body:JSON.stringify({ telegram_id: uid, ...body })
+  });
+  return r.json();
+}
+
+async function load() {
+  const h = await api("/api/habits");
+  const el = document.getElementById("habits");
+  el.innerHTML = "";
+
+  if (!h.length) {
+    el.innerHTML = "Пока нет привычек";
+    return;
+  }
+
+  h.forEach(x => {
+    const d = document.createElement("div");
+    d.className="card";
+    d.innerHTML = `
+      <b>${x.title}</b><br>🔥 ${x.streak}
+      <div class="row">
+        <button onclick="done(${x.id})">✅</button>
+        <button class="danger" onclick="del(${x.id})">🗑</button>
+      </div>`;
+    el.appendChild(d);
+  });
+}
+
+async function add() {
+  const t = document.getElementById("title");
+  if (!t.value.trim()) return;
+  await api("/api/add", { title: t.value });
+  t.value="";
+  load();
+}
+
+async function done(id){ await api("/api/done",{habit_id:id}); load(); }
+async function del(id){ await api("/api/delete",{habit_id:id}); load(); }
+
+load();
+</script>
+</body>
+</html>
