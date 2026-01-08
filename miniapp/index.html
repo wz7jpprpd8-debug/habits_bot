@@ -23,6 +23,12 @@
       font-size: 22px;
     }
 
+    .muted {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+
     .card {
       background: #fff;
       border-radius: 12px;
@@ -31,79 +37,169 @@
       box-shadow: 0 2px 8px rgba(0,0,0,0.05);
     }
 
-    button {
-      width: 100%;
-      padding: 14px;
+    .row {
+      display: flex;
+      gap: 8px;
       margin-top: 10px;
-      font-size: 16px;
+    }
+
+    button {
+      flex: 1;
+      padding: 12px;
+      font-size: 15px;
       border: none;
       border-radius: 10px;
       cursor: pointer;
+    }
+
+    .primary {
       background: #2ea6ff;
       color: #fff;
     }
 
-    button.secondary {
+    .danger {
+      background: #ff4d4f;
+      color: #fff;
+    }
+
+    .secondary {
       background: #e5e7eb;
       color: #111;
     }
 
-    .muted {
-      color: #666;
-      font-size: 14px;
+    input {
+      width: 100%;
+      padding: 12px;
+      font-size: 15px;
+      border-radius: 10px;
+      border: 1px solid #ddd;
+      margin-bottom: 10px;
     }
   </style>
 </head>
 <body>
 
   <h1>📋 Мои привычки</h1>
-
   <div id="status" class="muted">Загрузка...</div>
 
-  <div id="content" style="display:none">
+  <div id="app" style="display:none">
+
+    <div id="habits"></div>
 
     <div class="card">
-      <b>Тестовая привычка</b><br>
-      🔥 Серия: 3 дня
-      <button onclick="markDone()">✅ Выполнено</button>
+      <input id="newHabit" placeholder="Новая привычка…" />
+      <button class="primary" onclick="addHabit()">➕ Добавить</button>
     </div>
 
-    <button class="secondary" onclick="closeApp()">❌ Закрыть</button>
+    <button class="secondary" onclick="Telegram.WebApp.close()">❌ Закрыть</button>
 
   </div>
 
   <script>
     const tg = window.Telegram?.WebApp;
 
-    // ❌ Открыто не из Telegram
+    // ❌ не из Telegram
     if (!tg) {
       document.getElementById("status").innerText =
         "❌ Открой Mini App из Telegram";
       throw new Error("Not in Telegram");
     }
 
-    // ✅ Инициализация
     tg.ready();
     tg.expand();
 
     const user = tg.initDataUnsafe?.user;
+    const telegramId = user?.id;
 
     document.getElementById("status").innerText =
-      user
-        ? `👤 ${user.first_name}`
-        : "👤 Пользователь";
+      user ? `👤 ${user.first_name}` : "👤 Пользователь";
 
-    document.getElementById("content").style.display = "block";
+    document.getElementById("app").style.display = "block";
 
-    // ===== actions =====
+    // =========================
+    // API helper
+    // =========================
 
-    function markDone() {
-      tg.showAlert("✅ Привычка отмечена (тест)");
+    async function api(path, body = {}) {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          telegram_id: telegramId,
+          ...body
+        })
+      });
+
+      if (!res.ok) throw new Error("API error");
+      return res.json();
     }
 
-    function closeApp() {
-      tg.close();
+    // =========================
+    // Load habits
+    // =========================
+
+    async function loadHabits() {
+      const el = document.getElementById("habits");
+      el.innerHTML = "Загрузка…";
+
+      try {
+        const habits = await api("/api/habits");
+
+        if (!habits.length) {
+          el.innerHTML = "<div class='muted'>Пока нет привычек</div>";
+          return;
+        }
+
+        el.innerHTML = "";
+
+        habits.forEach(h => {
+          const div = document.createElement("div");
+          div.className = "card";
+
+          div.innerHTML = `
+            <b>${h.title}</b><br>
+            🔥 Серия: ${h.streak}
+            <div class="row">
+              <button class="primary" onclick="done(${h.id})">✅ Выполнено</button>
+              <button class="danger" onclick="del(${h.id})">🗑</button>
+            </div>
+          `;
+
+          el.appendChild(div);
+        });
+
+      } catch (e) {
+        el.innerHTML = "<div class='muted'>⚠️ Ошибка загрузки</div>";
+      }
     }
+
+    // =========================
+    // Actions
+    // =========================
+
+    async function done(id) {
+      await api("/api/done", { habit_id: id });
+      loadHabits();
+    }
+
+    async function del(id) {
+      if (!confirm("Удалить привычку?")) return;
+      await api("/api/delete", { habit_id: id });
+      loadHabits();
+    }
+
+    async function addHabit() {
+      const input = document.getElementById("newHabit");
+      const title = input.value.trim();
+      if (title.length < 2) return;
+
+      await api("/api/add", { title });
+      input.value = "";
+      loadHabits();
+    }
+
+    // старт
+    loadHabits();
   </script>
 
 </body>
