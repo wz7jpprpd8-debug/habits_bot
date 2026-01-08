@@ -2,8 +2,6 @@ import os
 import asyncpg
 import tempfile
 import matplotlib.pyplot as plt
-from aiohttp import web
-
 
 from datetime import date, timedelta, datetime, time
 
@@ -24,6 +22,8 @@ from aiogram.utils import executor
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import OpenAI
 
+from aiohttp import web
+
 
 # =========================
 # CONFIG
@@ -32,6 +32,7 @@ from openai import OpenAI
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+PORT = int(os.getenv("PORT", 8080))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
@@ -40,10 +41,13 @@ dp.middleware.setup(LoggingMiddleware())
 client = OpenAI(api_key=OPENAI_API_KEY)
 scheduler = AsyncIOScheduler()
 
+# aiohttp
+routes = web.RouteTableDef()
+
 
 # =========================
 # FSM
-# ——————————
+# =========================
 
 class AddHabitFSM(StatesGroup):
     title = State()
@@ -75,75 +79,7 @@ main_menu.add(
 
 async def get_db():
     return await asyncpg.connect(DATABASE_URL)
-# =========================
-# MINI APP API
-# =========================
 
-routes = web.RouteTableDef()
-
-@routes.post("/api/habits")
-async def api_habits(request):
-    data = await request.json()
-    uid = data["user_id"]
-
-    print("API /habits called, user_id =", uid)  # ← ВАЖНО
-
-    ...
-
-
-@routes.post("/api/habits")
-async def api_habits(request):
-    data = await request.json()
-    uid = data["user_id"]
-
-    db = await get_db()
-    rows = await db.fetch("""
-        SELECT h.id, h.title, h.streak
-        FROM habits h
-        JOIN users u ON h.user_id=u.id
-        WHERE u.telegram_id=$1 AND h.is_active=TRUE
-    """, uid)
-    await db.close()
-
-    return web.json_response([dict(r) for r in rows])
-
-
-@routes.post("/api/done")
-async def api_done(request):
-    data = await request.json()
-    hid = data["habit_id"]
-
-    db = await get_db()
-    await db.execute("""
-        INSERT INTO habit_logs (habit_id, date)
-        VALUES ($1, CURRENT_DATE)
-        ON CONFLICT DO NOTHING
-    """, hid)
-
-    await db.execute("""
-        UPDATE habits
-        SET streak = streak + 1, last_completed = CURRENT_DATE
-        WHERE id=$1
-    """, hid)
-    await db.close()
-
-    return web.json_response({"ok": True})
-
-
-@routes.post("/api/delete")
-async def api_delete(request):
-    data = await request.json()
-    hid = data["habit_id"]
-
-    db = await get_db()
-    await db.execute(
-        "UPDATE habits SET is_active=FALSE WHERE id=$1",
-        hid
-    )
-    await db.close()
-
-    return web.json_response({"ok": True})
-    
 
 async def init_db():
     conn = await get_db()
@@ -178,7 +114,7 @@ async def start_cmd(message: types.Message):
 
 
 # =========================
-# ADD HABIT — FSM WIZARD
+# ADD HABIT (FSM WIZARD)
 # =========================
 
 @dp.message_handler(lambda m: m.text == "➕ Добавить привычку")
@@ -213,20 +149,20 @@ async def add_habit_reminder_choice(message: types.Message, state: FSMContext):
     if message.text == "⏰ Да":
         await AddHabitFSM.reminder_time.set()
         await message.answer(
-            "Введите время (например 21:00)",
+            "Введите время (HH:MM, например 21:00)",
             reply_markup=ReplyKeyboardRemove(),
         )
         return
 
-    await message.answer("Пожалуйста, выберите кнопкой 👇")
+    await message.answer("Пожалуйста, выберите вариант кнопкой")
 
 
 @dp.message_handler(state=AddHabitFSM.reminder_time)
 async def add_habit_reminder_time(message: types.Message, state: FSMContext):
     try:
         t = datetime.strptime(message.text, "%H:%M").time()
-    except:
-        await message.answer("❌ Формат HH:MM (пример: 21:00)")
+    except ValueError:
+        await message.answer("❌ Формат времени: HH:MM (пример: 21:00)")
         return
 
     await state.update_data(reminder_time=t)
@@ -251,9 +187,10 @@ async def save_habit(state: FSMContext, message: types.Message):
         data["title"],
         data.get("reminder_time"),
     )
-    await db.close()
 
+    await db.close()
     await state.finish()
+
     await message.answer(
         f"✅ Привычка «{data['title']}» добавлена",
         reply_markup=main_menu,
@@ -261,7 +198,7 @@ async def save_habit(state: FSMContext, message: types.Message):
 
 
 # =========================
-# LIST + DELETE + DONE
+# LIST / DONE / DELETE
 # =========================
 
 @dp.message_handler(lambda m: m.text == "📋 Мои привычки")
@@ -271,8 +208,9 @@ async def list_habits(message: types.Message):
         """
         SELECT h.id, h.title, h.streak
         FROM habits h
-        JOIN users u ON h.user_id=u.id
+        JOIN users u ON h.user_id = u.id
         WHERE u.telegram_id=$1 AND h.is_active=TRUE
+        ORDER BY h.created_at
         """,
         message.from_user.id,
     )
@@ -372,7 +310,7 @@ async def stats_cmd(message: types.Message):
     )
 
     if not habits:
-        await message.answer("Нет данных")
+        await message.answer("Нет данных для статистики")
         await db.close()
         return
 
@@ -439,7 +377,7 @@ async def ai_analysis(message: types.Message):
 Привычки пользователя:
 {summary}
 
-Дай краткий анализ и 2 совета.
+Дай краткий анализ и 2 практических совета.
 """
 
     await message.answer("🧠 Анализирую...")
@@ -452,7 +390,7 @@ async def ai_analysis(message: types.Message):
         await message.answer(r.output_text)
     except Exception as e:
         await message.answer("AI временно недоступен")
-        print(e)
+        print("AI ERROR:", e)
 
 
 # =========================
@@ -474,12 +412,60 @@ async def send_reminders():
     )
 
     for u in users:
-        await bot.send_message(
-            u["telegram_id"],
-            "⏰ Напоминание! Отметь привычки 👇",
-        )
+        try:
+            await bot.send_message(
+                u["telegram_id"],
+                "⏰ Напоминание! Отметь привычки 👇",
+            )
+        except Exception as e:
+            print("Reminder error:", e)
 
     await db.close()
+
+
+# =========================
+# MINI APP API
+# =========================
+
+@routes.post("/api/habits")
+async def api_habits(request):
+    data = await request.json()
+    telegram_id = int(data["telegram_id"])
+
+    db = await get_db()
+
+    await db.execute(
+        """
+        INSERT INTO users (telegram_id)
+        VALUES ($1)
+        ON CONFLICT (telegram_id) DO NOTHING
+        """,
+        telegram_id,
+    )
+
+    rows = await db.fetch(
+        """
+        SELECT h.id, h.title, h.streak
+        FROM habits h
+        JOIN users u ON h.user_id=u.id
+        WHERE u.telegram_id=$1 AND h.is_active=TRUE
+        ORDER BY h.created_at
+        """,
+        telegram_id,
+    )
+
+    await db.close()
+
+    return web.json_response(
+        [
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "streak": r["streak"],
+            }
+            for r in rows
+        ]
+    )
 
 
 # =========================
@@ -490,36 +476,23 @@ async def on_startup(dp):
     await init_db()
 
     app = web.Application()
-    app.add_routes(routes)
+    app.add_routes(routes)   # ← ОДИН РАЗ
 
     runner = web.AppRunner(app)
     await runner.setup()
 
-    site = web.TCPSite(runner, "0.0.0.0", 8080)
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
 
-    print("✅ Bot + API started on port 8080")
-# =========================
-# TELEGRAM MINI APP
-# =========================
+    scheduler.add_job(send_reminders, "interval", minutes=1)
+    scheduler.start()
 
-from aiogram.types import WebAppInfo
+    print("✅ Bot + API started")
 
-@dp.message_handler(commands=["app"])
-async def open_mini_app(message: types.Message):
-    kb = InlineKeyboardMarkup().add(
-        InlineKeyboardButton(
-            text="📱 Открыть Habit Tracker",
-            web_app=WebAppInfo(
-                url="https://storied-bubblegum-a94e6a.netlify.app"
-            )
-        )
-    )
-
-    await message.answer(
-        "📱 Открой удобный интерфейс привычек:",
-        reply_markup=kb
-    )
 
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+    executor.start_polling(
+        dp,
+        skip_updates=True,
+        on_startup=on_startup,
+    )
