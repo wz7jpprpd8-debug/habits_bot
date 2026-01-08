@@ -11,9 +11,9 @@ from aiogram.types import (
     KeyboardButton,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    WebAppInfo,
 )
 from aiogram.utils import executor
-from aiogram.types import WebAppInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import OpenAI
@@ -45,17 +45,27 @@ ai_client = OpenAI(api_key=OPENAI_API_KEY)
 async def get_db():
     return await asyncpg.connect(DATABASE_URL)
 
+
 async def init_db():
     db = await get_db()
+
+    # users
     await db.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         telegram_id BIGINT UNIQUE,
         timezone_offset INT DEFAULT 0,
-        reminder_time TIME,
-        last_reminder DATE
+        reminder_time TIME
     );
+    """)
 
+    # безопасно добавляем колонку
+    await db.execute(
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_reminder DATE"
+    )
+
+    # habits
+    await db.execute("""
     CREATE TABLE IF NOT EXISTS habits (
         id SERIAL PRIMARY KEY,
         user_id INT,
@@ -64,17 +74,17 @@ async def init_db():
         last_completed DATE,
         is_active BOOLEAN DEFAULT TRUE
     );
+    """)
 
+    # habit logs
+    await db.execute("""
     CREATE TABLE IF NOT EXISTS habit_logs (
         id SERIAL PRIMARY KEY,
         habit_id INT,
         date DATE
     );
-
-    await db.execute(
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_reminder DATE"
-)
     """)
+
     await db.close()
 
 
@@ -85,7 +95,7 @@ async def init_db():
 def main_kb():
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
 
-    # ✅ КНОПКА MINI APP (если URL реально есть)
+    # ✅ MINI APP КНОПКА
     if WEBAPP_URL:
         kb.add(
             KeyboardButton(
@@ -108,6 +118,7 @@ def main_kb():
 
     return kb
 
+
 # =========================
 # START
 # =========================
@@ -122,10 +133,11 @@ async def start_cmd(message: types.Message):
     await db.close()
 
     await message.answer(
-        "👋 Привет!\n\n"
-        "Это твой трекер привычек 👇",
-        reply_markup=main_kb(),  # ← ВАЖНО
+        "👋 Привет!\n\nЭто твой трекер привычек 👇",
+        reply_markup=main_kb(),
     )
+
+
 # =========================
 # ADD HABIT
 # =========================
@@ -133,6 +145,7 @@ async def start_cmd(message: types.Message):
 @dp.message_handler(lambda m: m.text == "➕ Добавить привычку")
 async def add_habit_prompt(message: types.Message):
     await message.answer("✏️ Напиши название привычки")
+
 
 @dp.message_handler(lambda m: m.text not in [
     "➕ Добавить привычку",
@@ -250,99 +263,6 @@ async def delete_habit(callback: types.CallbackQuery):
 
 
 # =========================
-# STATS
-# =========================
-
-@dp.message_handler(lambda m: m.text == "📊 Статистика")
-async def stats_cmd(message: types.Message):
-    db = await get_db()
-    habits = await db.fetch("""
-        SELECT h.id
-        FROM habits h
-        JOIN users u ON h.user_id=u.id
-        WHERE u.telegram_id=$1 AND h.is_active=TRUE
-    """, message.from_user.id)
-
-    if not habits:
-        await message.answer("Нет данных")
-        await db.close()
-        return
-
-    today = date.today()
-    start = today - timedelta(days=6)
-
-    logs = await db.fetch("""
-        SELECT date, COUNT(*) cnt
-        FROM habit_logs
-        WHERE habit_id = ANY($1::int[])
-        AND date BETWEEN $2 AND $3
-        GROUP BY date
-        ORDER BY date
-    """, [h["id"] for h in habits], start, today)
-
-    days = [start + timedelta(days=i) for i in range(7)]
-    values = {row["date"]: row["cnt"] for row in logs}
-    counts = [values.get(d, 0) for d in days]
-
-    plt.figure()
-    plt.plot([d.strftime("%d.%m") for d in days], counts, marker="o")
-    plt.grid(True)
-
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    plt.savefig(tmp.name)
-    plt.close()
-
-    await message.answer_photo(open(tmp.name, "rb"))
-    await db.close()
-
-
-# =========================
-# AI ANALYSIS
-# =========================
-
-@dp.message_handler(lambda m: m.text == "🧠 AI-анализ")
-async def ai_analysis(message: types.Message):
-    db = await get_db()
-    habits = await db.fetch("""
-        SELECT title, streak
-        FROM habits h
-        JOIN users u ON h.user_id=u.id
-        WHERE u.telegram_id=$1 AND h.is_active=TRUE
-    """, message.from_user.id)
-    await db.close()
-
-    if not habits:
-        await message.answer("Нет данных для анализа")
-        return
-
-    summary = "\n".join(
-        f"- {h['title']}: {h['streak']} дней"
-        for h in habits
-    )
-
-    prompt = f"""
-Ты коуч по привычкам.
-
-Привычки пользователя:
-{summary}
-
-Дай краткий анализ и 2 совета.
-"""
-
-    await message.answer("🧠 Анализирую...")
-
-    try:
-        r = ai_client.responses.create(
-            model="gpt-4.1-mini",
-            input=prompt,
-        )
-        await message.answer(r.output_text)
-    except Exception as e:
-        await message.answer("AI временно недоступен")
-        print("AI ERROR:", e)
-
-
-# =========================
 # REMINDERS
 # =========================
 
@@ -353,6 +273,7 @@ async def reminder_help(message: types.Message):
         "/timezone +3 — часовой пояс\n"
         "/reminder 21:00 — время напоминания",
     )
+
 
 @dp.message_handler(commands=["timezone"])
 async def set_timezone(message: types.Message):
@@ -371,6 +292,7 @@ async def set_timezone(message: types.Message):
 
     await message.answer(f"🌍 Часовой пояс: UTC{offset:+}")
 
+
 @dp.message_handler(commands=["reminder"])
 async def set_reminder(message: types.Message):
     try:
@@ -387,6 +309,7 @@ async def set_reminder(message: types.Message):
     await db.close()
 
     await message.answer(f"⏰ Напоминание установлено на {t.strftime('%H:%M')}")
+
 
 async def send_reminders():
     utc_now = datetime.utcnow()
@@ -428,7 +351,8 @@ async def on_startup(_):
     await init_db()
     scheduler.add_job(send_reminders, "interval", minutes=1)
     scheduler.start()
-    print("✅ Bot started with habits, stats, AI and reminders")
+    print("✅ Bot started with habits, AI, stats and reminders")
+
 
 if __name__ == "__main__":
     executor.start_polling(
