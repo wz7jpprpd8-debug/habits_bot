@@ -263,6 +263,112 @@ async def delete_habit(callback: types.CallbackQuery):
 
 
 # =========================
+# STATS
+# =========================
+
+@dp.message_handler(lambda m: m.text == "📊 Статистика")
+async def stats_cmd(message: types.Message):
+    db = await get_db()
+
+    habits = await db.fetch("""
+        SELECT h.id
+        FROM habits h
+        JOIN users u ON h.user_id = u.id
+        WHERE u.telegram_id = $1 AND h.is_active = TRUE
+    """, message.from_user.id)
+
+    if not habits:
+        await message.answer("📊 Пока нет данных для статистики")
+        await db.close()
+        return
+
+    today = date.today()
+    start = today - timedelta(days=6)
+
+    logs = await db.fetch("""
+        SELECT date, COUNT(*) cnt
+        FROM habit_logs
+        WHERE habit_id = ANY($1::int[])
+        AND date BETWEEN $2 AND $3
+        GROUP BY date
+        ORDER BY date
+    """, [h["id"] for h in habits], start, today)
+
+    await db.close()
+
+    days = [start + timedelta(days=i) for i in range(7)]
+    values = {row["date"]: row["cnt"] for row in logs}
+    counts = [values.get(d, 0) for d in days]
+
+    plt.figure(figsize=(6, 4))
+    plt.plot(
+        [d.strftime("%d.%m") for d in days],
+        counts,
+        marker="o"
+    )
+    plt.title("📊 Активность за 7 дней")
+    plt.grid(True)
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    plt.savefig(tmp.name)
+    plt.close()
+
+    await message.answer_photo(open(tmp.name, "rb"))
+
+# =========================
+# AI ANALYSIS
+# =========================
+
+@dp.message_handler(lambda m: m.text == "🧠 AI-анализ")
+async def ai_analysis(message: types.Message):
+
+    if not OPENAI_API_KEY:
+        await message.answer("❌ OPENAI_API_KEY не задан")
+        return
+
+    db = await get_db()
+    habits = await db.fetch("""
+        SELECT title, streak
+        FROM habits h
+        JOIN users u ON h.user_id = u.id
+        WHERE u.telegram_id = $1 AND h.is_active = TRUE
+    """, message.from_user.id)
+    await db.close()
+
+    if not habits:
+        await message.answer("🧠 Нет данных для анализа")
+        return
+
+    summary = "\n".join(
+        f"- {h['title']}: {h['streak']} дней подряд"
+        for h in habits
+    )
+
+    prompt = f"""
+Ты коуч по привычкам.
+
+Привычки пользователя:
+{summary}
+
+Дай краткий анализ и 2 практических совета.
+"""
+
+    await message.answer("🧠 Анализирую привычки...")
+
+    try:
+        r = ai_client.responses.create(
+            model="gpt-4.1-mini",
+            input=prompt,
+        )
+        await message.answer(r.output_text)
+    except Exception as e:
+        print("AI ERROR:", e)
+        await message.answer("⚠️ AI временно недоступен")
+
+
+
+
+# =========================
 # REMINDERS
 # =========================
 
