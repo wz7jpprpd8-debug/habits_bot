@@ -3,7 +3,7 @@ import asyncpg
 import tempfile
 import matplotlib.pyplot as plt
 
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import (
@@ -14,7 +14,6 @@ from aiogram.types import (
 )
 from aiogram.utils import executor
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import OpenAI
 
 
@@ -31,11 +30,7 @@ if not BOT_TOKEN or not DATABASE_URL:
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
-scheduler = AsyncIOScheduler()
 ai_client = OpenAI(api_key=OPENAI_API_KEY)
-
-# 🔑 состояние ожидания ввода привычки
-waiting_for_habit = set()
 
 
 # =========================
@@ -50,10 +45,7 @@ async def init_db():
     await db.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
-        telegram_id BIGINT UNIQUE,
-        timezone_offset INT DEFAULT 0,
-        reminder_time TIME,
-        last_reminder DATE
+        telegram_id BIGINT UNIQUE
     );
 
     CREATE TABLE IF NOT EXISTS habits (
@@ -88,9 +80,6 @@ def main_kb():
         KeyboardButton("📊 Статистика"),
         KeyboardButton("🧠 AI-анализ"),
     )
-    kb.add(
-        KeyboardButton("⏰ Напоминания"),
-    )
     return kb
 
 
@@ -114,33 +103,29 @@ async def start_cmd(message: types.Message):
 
 
 # =========================
-# ADD HABIT (FIXED)
+# ADD HABIT
 # =========================
 
 @dp.message_handler(lambda m: m.text == "➕ Добавить привычку")
 async def add_habit_prompt(message: types.Message):
-    waiting_for_habit.add(message.from_user.id)
     await message.answer("✏️ Напиши название привычки")
 
-@dp.message_handler()
+@dp.message_handler(lambda m: m.text not in [
+    "➕ Добавить привычку",
+    "📋 Мои привычки",
+    "📊 Статистика",
+    "🧠 AI-анализ",
+])
 async def add_habit(message: types.Message):
-    uid = message.from_user.id
-
-    # ❗ добавляем привычку ТОЛЬКО если ждали её
-    if uid not in waiting_for_habit:
-        return
-
-    waiting_for_habit.remove(uid)
     title = message.text.strip()
 
-    if title.startswith("/") or len(title) < 2:
-        await message.answer("❌ Некорректное название", reply_markup=main_kb())
+    if len(title) < 2:
         return
 
     db = await get_db()
     user = await db.fetchrow(
         "SELECT id FROM users WHERE telegram_id=$1",
-        uid,
+        message.from_user.id,
     )
 
     await db.execute(
@@ -194,4 +179,156 @@ async def list_habits(message: types.Message):
 # CALLBACKS
 # =========================
 
-@dp.callback_query_handler(lambda c: c.data.startswith
+@dp.callback_query_handler(lambda c: c.data.startswith("done:"))
+async def mark_done(callback: types.CallbackQuery):
+    habit_id = int(callback.data.split(":")[1])
+    today = date.today()
+
+    db = await get_db()
+    habit = await db.fetchrow(
+        "SELECT streak, last_completed FROM habits WHERE id=$1",
+        habit_id,
+    )
+
+    if habit["last_completed"] == today:
+        await callback.answer("Уже отмечено сегодня")
+        await db.close()
+        return
+
+    streak = habit["streak"] + 1 if habit["last_completed"] == today - timedelta(days=1) else 1
+
+    await db.execute(
+        "INSERT INTO habit_logs (habit_id, date) VALUES ($1, $2)",
+        habit_id, today,
+    )
+    await db.execute(
+        "UPDATE habits SET streak=$1, last_completed=$2 WHERE id=$3",
+        streak, today, habit_id,
+    )
+    await db.close()
+
+    await callback.answer(f"🔥 Серия: {streak} дней", show_alert=True)
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("delete:"))
+async def delete_habit(callback: types.CallbackQuery):
+    habit_id = int(callback.data.split(":")[1])
+
+    db = await get_db()
+    await db.execute(
+        "UPDATE habits SET is_active=FALSE WHERE id=$1",
+        habit_id,
+    )
+    await db.close()
+
+    await callback.message.edit_text("🗑 Привычка удалена")
+    await callback.answer("Удалено")
+
+
+# =========================
+# STATS
+# =========================
+
+@dp.message_handler(lambda m: m.text == "📊 Статистика")
+async def stats_cmd(message: types.Message):
+    db = await get_db()
+    habits = await db.fetch("""
+        SELECT h.id
+        FROM habits h
+        JOIN users u ON h.user_id=u.id
+        WHERE u.telegram_id=$1 AND h.is_active=TRUE
+    """, message.from_user.id)
+
+    if not habits:
+        await message.answer("Нет данных")
+        await db.close()
+        return
+
+    today = date.today()
+    start = today - timedelta(days=6)
+
+    logs = await db.fetch("""
+        SELECT date, COUNT(*) cnt
+        FROM habit_logs
+        WHERE habit_id = ANY($1::int[])
+        AND date BETWEEN $2 AND $3
+        GROUP BY date
+        ORDER BY date
+    """, [h["id"] for h in habits], start, today)
+
+    days = [start + timedelta(days=i) for i in range(7)]
+    values = {row["date"]: row["cnt"] for row in logs}
+    counts = [values.get(d, 0) for d in days]
+
+    plt.figure()
+    plt.plot([d.strftime("%d.%m") for d in days], counts, marker="o")
+    plt.grid(True)
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    plt.savefig(tmp.name)
+    plt.close()
+
+    await message.answer_photo(open(tmp.name, "rb"))
+    await db.close()
+
+
+# =========================
+# AI ANALYSIS
+# =========================
+
+@dp.message_handler(lambda m: m.text == "🧠 AI-анализ")
+async def ai_analysis(message: types.Message):
+    db = await get_db()
+    habits = await db.fetch("""
+        SELECT title, streak
+        FROM habits h
+        JOIN users u ON h.user_id=u.id
+        WHERE u.telegram_id=$1 AND h.is_active=TRUE
+    """, message.from_user.id)
+    await db.close()
+
+    if not habits:
+        await message.answer("Нет данных для анализа")
+        return
+
+    summary = "\n".join(
+        f"- {h['title']}: {h['streak']} дней"
+        for h in habits
+    )
+
+    prompt = f"""
+Ты коуч по привычкам.
+
+Привычки пользователя:
+{summary}
+
+Дай краткий анализ и 2 совета.
+"""
+
+    await message.answer("🧠 Анализирую...")
+
+    try:
+        r = ai_client.responses.create(
+            model="gpt-4.1-mini",
+            input=prompt,
+        )
+        await message.answer(r.output_text)
+    except Exception as e:
+        await message.answer("AI временно недоступен")
+        print("AI ERROR:", e)
+
+
+# =========================
+# STARTUP
+# =========================
+
+async def on_startup(_):
+    await init_db()
+    print("✅ Bot started (habits + stats + AI)")
+
+if __name__ == "__main__":
+    executor.start_polling(
+        dp,
+        skip_updates=True,
+        on_startup=on_startup,
+    )
