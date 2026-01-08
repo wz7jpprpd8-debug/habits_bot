@@ -37,6 +37,9 @@ dp = Dispatcher(bot)
 scheduler = AsyncIOScheduler()
 ai_client = OpenAI(api_key=OPENAI_API_KEY)
 
+print("BOT_TOKEN =", BOT_TOKEN)
+print("DATABASE_URL =", DATABASE_URL)
+
 
 # =========================
 # DB
