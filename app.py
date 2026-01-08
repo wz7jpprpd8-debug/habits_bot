@@ -14,6 +14,9 @@ from aiogram.types import (
     WebAppInfo,
 )
 from aiogram.utils import executor
+from aiohttp import web
+app = web.Application()
+routes = web.RouteTableDef()
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import OpenAI
@@ -210,6 +213,37 @@ async def list_habits(message: types.Message):
             parse_mode="HTML",
             reply_markup=kb,
         )
+
+
+
+@routes.post("/api/add")
+async def api_add_habit(request):
+    data = await request.json()
+    telegram_id = data.get("telegram_id")
+    title = data.get("title", "").strip()
+
+    if not telegram_id or len(title) < 2:
+        return web.json_response({"error": "bad data"}, status=400)
+
+    db = await get_db()
+
+    user = await db.fetchrow(
+        "SELECT id FROM users WHERE telegram_id=$1",
+        telegram_id
+    )
+
+    if not user:
+        await db.close()
+        return web.json_response({"error": "user not found"}, status=404)
+
+    await db.execute(
+        "INSERT INTO habits (user_id, title) VALUES ($1, $2)",
+        user["id"],
+        title
+    )
+
+    await db.close()
+    return web.json_response({"ok": True})
 
 
 # =========================
@@ -453,17 +487,30 @@ async def send_reminders():
 # STARTUP
 # =========================
 
-async def on_startup(_):
+async def start_all():
     await init_db()
+
+    app.add_routes(routes)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    site = web.TCPSite(
+        runner,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 8080))
+    )
+    await site.start()
+
     scheduler.add_job(send_reminders, "interval", minutes=1)
     scheduler.start()
-    print("✅ Bot started with habits, AI, stats and reminders")
-    print("WEBAPP_URL =", WEBAPP_URL)
+
+    print("🌐 Web API started")
+    print("🤖 Bot started")
+
+    await dp.start_polling()
 
 
 if __name__ == "__main__":
-    executor.start_polling(
-        dp,
-        skip_updates=True,
-        on_startup=on_startup,
-    )
+    import asyncio
+    asyncio.run(start_all())
