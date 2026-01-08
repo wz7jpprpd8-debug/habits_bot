@@ -40,6 +40,8 @@ ai_client = OpenAI(api_key=OPENAI_API_KEY)
 print("BOT_TOKEN =", BOT_TOKEN)
 print("DATABASE_URL =", DATABASE_URL)
 
+user_states = {}
+
 
 # =========================
 # DB
@@ -147,16 +149,39 @@ async def start_cmd(message: types.Message):
 
 @dp.message_handler(lambda m: m.text == "➕ Добавить привычку")
 async def add_habit_prompt(message: types.Message):
+    user_states[message.from_user.id] = "waiting_habit"
     await message.answer("✏️ Напиши название привычки")
 
 
-@dp.message_handler(lambda m: m.text not in [
-    "➕ Добавить привычку",
-    "📋 Мои привычки",
-    "📊 Статистика",
-    "🧠 AI-анализ",
-    "⏰ Напоминания",
-] and not m.text.startswith("/"))
+@dp.message_handler()
+async def add_habit(message: types.Message):
+    if user_states.get(message.from_user.id) != "waiting_habit":
+        return
+
+    title = message.text.strip()
+    if len(title) < 2:
+        await message.answer("Название слишком короткое")
+        return
+
+    db = await get_db()
+    user = await db.fetchrow(
+        "SELECT id FROM users WHERE telegram_id=$1",
+        message.from_user.id,
+    )
+
+    await db.execute(
+        "INSERT INTO habits (user_id, title) VALUES ($1, $2)",
+        user["id"],
+        title,
+    )
+    await db.close()
+
+    user_states.pop(message.from_user.id, None)
+
+    await message.answer(
+        f"✅ Привычка «{title}» добавлена",
+        reply_markup=main_kb(),
+    )
 async def add_habit(message: types.Message):
     title = message.text.strip()
     if len(title) < 2:
