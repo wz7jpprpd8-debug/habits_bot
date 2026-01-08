@@ -1,3 +1,4 @@
+waiting_for_habit_name = set()
 import os
 import asyncpg
 import tempfile
