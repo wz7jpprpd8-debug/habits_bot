@@ -118,13 +118,8 @@ async def start_cmd(message: types.Message):
 async def add_habit_prompt(message: types.Message):
     await message.answer("✏️ Напиши название привычки")
 
-@dp.message_handler(lambda m: m.text not in [
-    "➕ Добавить привычку",
-    "📋 Мои привычки",
-    "📊 Статистика",
-    "🧠 AI-анализ",
-    "⏰ Напоминания",
-])
+@dp.message_handler(lambda m: not m.text.startswith("/"))
+
 async def add_habit(message: types.Message):
     title = message.text.strip()
 
