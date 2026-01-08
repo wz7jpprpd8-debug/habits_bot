@@ -451,13 +451,116 @@ async def send_reminders():
 
     await db.close()
 
-Jan 8, 2026 at 5:39 PM
-Starting Container
-BOT_TOKEN = 8083796484:AAGV9BjrG7oztBxnnPoAKkRe-nUEqJ7m4Fw
-DATABASE_URL = postgresql://postgres:mlGTMIszkqMvfRZTfHsHaPYdSjdzeBWb@nozomi.proxy.rlwy.net:12708/railway
-Updates were skipped successfully.
-✅ Bot started with habits, AI, stats and reminders
-WEBAPP_URL = https://storied-bubblegum-a94e6a.netlify.app
+from aiohttp import web
+import pathlib
+
+BASE_DIR = pathlib.Path(__file__).parent
+routes = web.RouteTableDef()
+
+
+@routes.get("/")
+async def index(request):
+    return web.FileResponse(BASE_DIR / "index.html")
+
+
+@routes.post("/api/habits")
+async def api_habits(request):
+    data = await request.json()
+    telegram_id = data.get("telegram_id")
+
+    db = await get_db()
+    rows = await db.fetch("""
+        SELECT h.id, h.title, h.streak
+        FROM habits h
+        JOIN users u ON h.user_id=u.id
+        WHERE u.telegram_id=$1 AND h.is_active=TRUE
+        ORDER BY h.id
+    """, telegram_id)
+    await db.close()
+
+    return web.json_response([
+        dict(id=r["id"], title=r["title"], streak=r["streak"])
+        for r in rows
+    ])
+
+
+@routes.post("/api/add")
+async def api_add(request):
+    data = await request.json()
+    telegram_id = data["telegram_id"]
+    title = data["title"]
+
+    db = await get_db()
+    user = await db.fetchrow(
+        "SELECT id FROM users WHERE telegram_id=$1",
+        telegram_id,
+    )
+
+    await db.execute(
+        "INSERT INTO habits (user_id, title) VALUES ($1, $2)",
+        user["id"], title
+    )
+    await db.close()
+
+    return web.json_response({"ok": True})
+
+
+@routes.post("/api/done")
+async def api_done(request):
+    data = await request.json()
+    habit_id = data["habit_id"]
+
+    today = date.today()
+    db = await get_db()
+
+    habit = await db.fetchrow(
+        "SELECT streak, last_completed FROM habits WHERE id=$1",
+        habit_id
+    )
+
+    streak = habit["streak"] + 1 if habit["last_completed"] == today - timedelta(days=1) else 1
+
+    await db.execute(
+        "UPDATE habits SET streak=$1, last_completed=$2 WHERE id=$3",
+        streak, today, habit_id
+    )
+
+    await db.execute(
+        "INSERT INTO habit_logs (habit_id, date) VALUES ($1, $2)",
+        habit_id, today
+    )
+
+    await db.close()
+    return web.json_response({"ok": True})
+
+
+@routes.post("/api/delete")
+async def api_delete(request):
+    data = await request.json()
+    habit_id = data["habit_id"]
+
+    db = await get_db()
+    await db.execute(
+        "UPDATE habits SET is_active=FALSE WHERE id=$1",
+        habit_id
+    )
+    await db.close()
+
+    return web.json_response({"ok": True})
+
+
+async def start_web():
+    app = web.Application()
+    app.add_routes(routes)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    port = int(os.getenv("PORT", 8000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
+    print(f"🌐 Web server started on port {port}")
 
 
 
