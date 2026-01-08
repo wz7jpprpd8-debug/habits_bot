@@ -430,42 +430,24 @@ async def send_reminders():
 @routes.post("/api/habits")
 async def api_habits(request):
     data = await request.json()
-    telegram_id = int(data["telegram_id"])
+    telegram_id = data["telegram_id"]
 
     db = await get_db()
-
-    await db.execute(
-        """
-        INSERT INTO users (telegram_id)
-        VALUES ($1)
-        ON CONFLICT (telegram_id) DO NOTHING
-        """,
-        telegram_id,
-    )
-
     rows = await db.fetch(
         """
-        SELECT h.id, h.title, h.streak
+        SELECT title, streak
         FROM habits h
-        JOIN users u ON h.user_id=u.id
+        JOIN users u ON h.user_id = u.id
         WHERE u.telegram_id=$1 AND h.is_active=TRUE
-        ORDER BY h.created_at
         """,
         telegram_id,
     )
-
     await db.close()
 
-    return web.json_response(
-        [
-            {
-                "id": r["id"],
-                "title": r["title"],
-                "streak": r["streak"],
-            }
-            for r in rows
-        ]
-    )
+    return web.json_response([
+        {"title": r["title"], "streak": r["streak"]}
+        for r in rows
+    ])
 
 
 # =========================
