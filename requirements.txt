@@ -1,7 +1,8 @@
 aiogram==2.25.1
 asyncpg
-python-dotenv
 apscheduler
 matplotlib
 openai
-pip install fastapi uvicorn asyncpg
+fastapi
+uvicorn
+python-multipart
