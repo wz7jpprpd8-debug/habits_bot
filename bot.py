@@ -80,6 +80,15 @@ async def init_db():
 
 def main_kb():
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
+
+    if WEBAPP_URL:
+        kb.add(
+            KeyboardButton(
+                "🚀 Открыть приложение",
+                web_app=WebAppInfo(url=WEBAPP_URL)
+            )
+        )
+
     kb.add(
         KeyboardButton("➕ Добавить привычку"),
         KeyboardButton("📋 Мои привычки"),
@@ -92,7 +101,6 @@ def main_kb():
         KeyboardButton("⏰ Напоминания"),
     )
     return kb
-
 
 # =========================
 # START
