@@ -73,6 +73,36 @@ async def start_cmd(message: types.Message):
         "/stats — статистика\n"
         "/analysis — AI-анализ\n"
     )
+@dp.message_handler(commands=["timezone"])
+async def set_timezone(message: types.Message):
+    args = message.get_args().strip()
+
+    try:
+        offset = int(args)
+        if offset < -12 or offset > 14:
+            raise ValueError
+    except:
+        await message.answer(
+            "Используй: /timezone +3\n"
+            "Пример: /timezone -5"
+        )
+        return
+
+    db = await get_db()
+    await db.execute(
+        """
+        UPDATE users
+        SET timezone_offset = $1
+        WHERE telegram_id = $2
+        """,
+        offset,
+        message.from_user.id
+    )
+    await db.close()
+
+    sign = "+" if offset >= 0 else ""
+    await message.answer(f"🌍 Часовой пояс установлен: UTC{sign}{offset}")
+
 
 @dp.message_handler(commands=["reminder"])
 async def set_reminder(message: types.Message):
