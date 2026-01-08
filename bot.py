@@ -3,7 +3,7 @@ import asyncpg
 import tempfile
 import matplotlib.pyplot as plt
 
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, time
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import (
@@ -14,6 +14,7 @@ from aiogram.types import (
 )
 from aiogram.utils import executor
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import OpenAI
 
 
@@ -30,6 +31,7 @@ if not BOT_TOKEN or not DATABASE_URL:
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
+scheduler = AsyncIOScheduler()
 ai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 
@@ -45,7 +47,10 @@ async def init_db():
     await db.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
-        telegram_id BIGINT UNIQUE
+        telegram_id BIGINT UNIQUE,
+        timezone_offset INT DEFAULT 0,
+        reminder_time TIME,
+        last_reminder DATE
     );
 
     CREATE TABLE IF NOT EXISTS habits (
@@ -79,6 +84,9 @@ def main_kb():
     kb.add(
         KeyboardButton("📊 Статистика"),
         KeyboardButton("🧠 AI-анализ"),
+    )
+    kb.add(
+        KeyboardButton("⏰ Напоминания"),
     )
     return kb
 
@@ -115,6 +123,7 @@ async def add_habit_prompt(message: types.Message):
     "📋 Мои привычки",
     "📊 Статистика",
     "🧠 AI-анализ",
+    "⏰ Напоминания",
 ])
 async def add_habit(message: types.Message):
     title = message.text.strip()
@@ -319,12 +328,91 @@ async def ai_analysis(message: types.Message):
 
 
 # =========================
+# REMINDERS
+# =========================
+
+@dp.message_handler(lambda m: m.text == "⏰ Напоминания")
+async def reminder_help(message: types.Message):
+    await message.answer(
+        "⏰ Напоминания\n\n"
+        "/timezone +3 — часовой пояс\n"
+        "/reminder 21:00 — время напоминания",
+    )
+
+@dp.message_handler(commands=["timezone"])
+async def set_timezone(message: types.Message):
+    try:
+        offset = int(message.get_args())
+    except:
+        await message.answer("Пример: /timezone +3")
+        return
+
+    db = await get_db()
+    await db.execute(
+        "UPDATE users SET timezone_offset=$1 WHERE telegram_id=$2",
+        offset, message.from_user.id,
+    )
+    await db.close()
+
+    await message.answer(f"🌍 Часовой пояс: UTC{offset:+}")
+
+@dp.message_handler(commands=["reminder"])
+async def set_reminder(message: types.Message):
+    try:
+        t = datetime.strptime(message.get_args(), "%H:%M").time()
+    except:
+        await message.answer("Формат: /reminder 21:00")
+        return
+
+    db = await get_db()
+    await db.execute(
+        "UPDATE users SET reminder_time=$1 WHERE telegram_id=$2",
+        t, message.from_user.id,
+    )
+    await db.close()
+
+    await message.answer(f"⏰ Напоминание установлено на {t}")
+
+
+async def send_reminders():
+    utc_now = datetime.utcnow()
+
+    db = await get_db()
+    users = await db.fetch("""
+        SELECT telegram_id, timezone_offset, reminder_time, last_reminder
+        FROM users
+        WHERE reminder_time IS NOT NULL
+    """)
+
+    for u in users:
+        local_time = (utc_now + timedelta(hours=u["timezone_offset"])).time().replace(second=0, microsecond=0)
+        today = utc_now.date()
+
+        if local_time == u["reminder_time"] and u["last_reminder"] != today:
+            try:
+                await bot.send_message(
+                    u["telegram_id"],
+                    "⏰ Напоминание! Отметь привычки 👇",
+                )
+                await db.execute(
+                    "UPDATE users SET last_reminder=$1 WHERE telegram_id=$2",
+                    today, u["telegram_id"],
+                )
+            except:
+                pass
+
+    await db.close()
+
+
+# =========================
 # STARTUP
 # =========================
 
 async def on_startup(_):
     await init_db()
-    print("✅ Bot started (habits + stats + AI)")
+    scheduler.add_job(send_reminders, "interval", minutes=1)
+    scheduler.start()
+    print("✅ Bot started with reminders")
 
 if __name__ == "__main__":
     executor.start_polling(
