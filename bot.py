@@ -448,7 +448,7 @@ async def api_habits(request):
     db = await get_db()
     rows = await db.fetch(
         """
-        SELECT title, streak
+        SELECT h.id, h.title, h.streak
         FROM habits h
         JOIN users u ON h.user_id = u.id
         WHERE u.telegram_id=$1 AND h.is_active=TRUE
@@ -458,7 +458,11 @@ async def api_habits(request):
     await db.close()
 
     return web.json_response([
-        {"title": r["title"], "streak": r["streak"]}
+        {
+            "id": r["id"],        # 🔴 ОБЯЗАТЕЛЬНО
+            "title": r["title"],
+            "streak": r["streak"]
+        }
         for r in rows
     ])
 
