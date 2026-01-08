@@ -81,12 +81,14 @@ async def init_db():
 def main_kb():
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
 
-    kb.add(
-        KeyboardButton(
-            "🚀 Открыть приложение",
-            web_app=WebAppInfo(url=WEBAPP_URL)
+    # ✅ КНОПКА MINI APP (если URL реально есть)
+    if WEBAPP_URL:
+        kb.add(
+            KeyboardButton(
+                "🚀 Открыть приложение",
+                web_app=WebAppInfo(url=WEBAPP_URL)
+            )
         )
-    )
 
     kb.add(
         KeyboardButton("➕ Добавить привычку"),
@@ -115,35 +117,11 @@ async def start_cmd(message: types.Message):
     )
     await db.close()
 
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-
-    # ✅ КНОПКА MINI APP — ТОЛЬКО ЕСЛИ URL ЕСТЬ
-    if WEBAPP_URL:
-        kb.add(
-            KeyboardButton(
-                "🚀 Открыть приложение",
-                web_app=types.WebAppInfo(url=WEBAPP_URL)
-            )
-        )
-
-    kb.add(
-        KeyboardButton("➕ Добавить привычку"),
-        KeyboardButton("📋 Мои привычки"),
-    )
-    kb.add(
-        KeyboardButton("📊 Статистика"),
-        KeyboardButton("🧠 AI-анализ"),
-    )
-    kb.add(
-        KeyboardButton("⏰ Напоминания"),
-    )
-
     await message.answer(
         "👋 Привет!\n\n"
         "Это твой трекер привычек 👇",
-        reply_markup=kb,
+        reply_markup=main_kb(),  # ← ВАЖНО
     )
-
 # =========================
 # ADD HABIT
 # =========================
