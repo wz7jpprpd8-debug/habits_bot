@@ -33,8 +33,8 @@ dp.middleware.setup(LoggingMiddleware())
 client = OpenAI()
 scheduler = AsyncIOScheduler()
 
-last_ai_call = set()
 waiting_for_habit_name = set()
+last_ai_call = set()
 
 
 # =========================
@@ -52,7 +52,6 @@ main_menu.add(
 )
 main_menu.add(
     KeyboardButton("⏰ Напоминания"),
-    KeyboardButton("⚙️ Настройки"),
 )
 
 
@@ -91,30 +90,23 @@ async def start_cmd(message: types.Message):
 
     await message.answer(
         "👋 Привет!\n\n"
-        "Я помогу тебе выработать полезные привычки.\n"
-        "Выбери действие 👇",
+        "Я бот для трекинга привычек 👇",
         reply_markup=main_menu,
     )
 
 
 # =========================
-# ADD HABIT (BUTTON FLOW)
+# ADD HABIT
 # =========================
 
 @dp.message_handler(lambda m: m.text == "➕ Добавить привычку")
 async def add_habit_button(message: types.Message):
     waiting_for_habit_name.add(message.from_user.id)
-    await message.answer(
-        "✏️ Напиши название привычки\n\n"
-        "Пример: Чтение",
-    )
+    await message.answer("✏️ Напиши название привычки")
 
 
-@dp.message_handler()
+@dp.message_handler(lambda m: m.from_user.id in waiting_for_habit_name)
 async def catch_habit_name(message: types.Message):
-    if message.from_user.id not in waiting_for_habit_name:
-        return
-
     title = message.text.strip()
     waiting_for_habit_name.remove(message.from_user.id)
 
@@ -149,10 +141,10 @@ async def list_habits(message: types.Message):
         SELECT h.id, h.title, h.streak
         FROM habits h
         JOIN users u ON h.user_id = u.id
-        WHERE u.telegram_id = $1 AND h.is_active = TRUE
+        WHERE u.telegram_id=$1 AND h.is_active=TRUE
         ORDER BY h.created_at
         """,
-        message.from_user.id
+        message.from_user.id,
     )
     await db.close()
 
@@ -170,19 +162,14 @@ async def list_habits(message: types.Message):
         kb.add(
             InlineKeyboardButton(
                 "✅ Выполнено",
-                callback_data=f"done:{r['id']}"
+                callback_data=f"done:{r['id']}",
             ),
             InlineKeyboardButton(
                 "🗑 Удалить",
-                callback_data=f"delete:{r['id']}"
-            )
+                callback_data=f"delete:{r['id']}",
+            ),
         )
 
-        await message.answer(
-            text,
-            reply_markup=kb,
-            parse_mode="HTML"
-        )
         await message.answer(
             text,
             reply_markup=kb,
@@ -262,224 +249,11 @@ async def delete_habit(callback: types.CallbackQuery):
 
 
 # =========================
-# STATS
-# =========================
-
-@dp.message_handler(lambda m: m.text == "📊 Статистика" or m.text == "/stats")
-async def stats_cmd(message: types.Message):
-    db = await get_db()
-
-    habits = await db.fetch(
-        """
-        SELECT h.id
-        FROM habits h
-        JOIN users u ON h.user_id = u.id
-        WHERE u.telegram_id=$1 AND h.is_active=TRUE
-        """,
-        message.from_user.id,
-    )
-
-    if not habits:
-        await message.answer("Нет данных для статистики")
-        await db.close()
-        return
-
-    today = date.today()
-    start = today - timedelta(days=6)
-
-    logs = await db.fetch(
-        """
-        SELECT date, COUNT(*) as cnt
-        FROM habit_logs
-        WHERE habit_id = ANY($1::int[])
-        AND date BETWEEN $2 AND $3
-        GROUP BY date
-        ORDER BY date
-        """,
-        [h["id"] for h in habits],
-        start,
-        today,
-    )
-
-    days = [start + timedelta(days=i) for i in range(7)]
-    values = {row["date"]: row["cnt"] for row in logs}
-    counts = [values.get(d, 0) for d in days]
-
-    plt.figure()
-    plt.plot([d.strftime("%d.%m") for d in days], counts, marker="o")
-    plt.grid(True)
-
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    plt.savefig(tmp.name)
-    plt.close()
-
-    await message.answer_photo(open(tmp.name, "rb"))
-    await db.close()
-
-
-# =========================
-# AI ANALYSIS
-# =========================
-
-@dp.message_handler(lambda m: m.text == "🧠 AI-анализ" or m.text == "/analysis")
-async def ai_analysis(message: types.Message):
-    uid = message.from_user.id
-    now = datetime.utcnow()
-
-    if uid in last_ai_call:
-        await message.answer("⏳ Анализ можно запрашивать раз в сессию")
-        return
-
-    last_ai_call.add(uid)
-
-    db = await get_db()
-    habits = await db.fetch(
-        """
-        SELECT title, streak
-        FROM habits h
-        JOIN users u ON h.user_id = u.id
-        WHERE u.telegram_id=$1 AND h.is_active=TRUE
-        """,
-        uid,
-    )
-
-    if not habits:
-        await message.answer("Нет данных для анализа")
-        await db.close()
-        return
-
-    summary = "\n".join(
-        f"- {h['title']}: серия {h['streak']} дней"
-        for h in habits
-    )
-
-    prompt = f"""
-Ты коуч по формированию привычек.
-
-Привычки пользователя:
-{summary}
-
-Ответь строго в формате:
-
-Итог:
-(1–2 предложения)
-
-Советы:
-- совет 1
-- совет 2
-
-Риск:
-- один риск
-"""
-
-    await message.answer("🧠 Анализирую привычки...")
-
-    try:
-        response = client.responses.create(
-            model="gpt-4.1-mini",
-            input=prompt,
-        )
-        await message.answer(response.output_text)
-    except Exception as e:
-        await message.answer("⚠️ AI временно недоступен")
-        print("AI ERROR:", e)
-
-    await db.close()
-
-
-# =========================
-# REMINDERS + TIMEZONE
-# =========================
-
-@dp.message_handler(lambda m: m.text == "⏰ Напоминания")
-async def reminder_help(message: types.Message):
-    await message.answer(
-        "⏰ Напоминания\n\n"
-        "1️⃣ Установи часовой пояс:\n"
-        "/timezone +3\n\n"
-        "2️⃣ Установи время:\n"
-        "/reminder 21:00",
-    )
-
-
-@dp.message_handler(commands=["timezone"])
-async def set_timezone(message: types.Message):
-    try:
-        offset = int(message.get_args())
-        if offset < -12 or offset > 14:
-            raise ValueError
-    except:
-        await message.answer("Используй: /timezone +3")
-        return
-
-    db = await get_db()
-    await db.execute(
-        "UPDATE users SET timezone_offset=$1 WHERE telegram_id=$2",
-        offset,
-        message.from_user.id,
-    )
-    await db.close()
-
-    sign = "+" if offset >= 0 else ""
-    await message.answer(f"🌍 Часовой пояс установлен: UTC{sign}{offset}")
-
-
-@dp.message_handler(commands=["reminder"])
-async def set_reminder(message: types.Message):
-    try:
-        reminder_time = datetime.strptime(message.get_args(), "%H:%M").time()
-    except:
-        await message.answer("Используй формат: /reminder 21:00")
-        return
-
-    db = await get_db()
-    await db.execute(
-        "UPDATE users SET reminder_time=$1 WHERE telegram_id=$2",
-        reminder_time,
-        message.from_user.id,
-    )
-    await db.close()
-
-    await message.answer(f"⏰ Напоминание установлено на {reminder_time}")
-
-
-async def send_reminders():
-    utc_now = datetime.utcnow()
-
-    db = await get_db()
-    users = await db.fetch(
-        """
-        SELECT telegram_id, reminder_time, timezone_offset
-        FROM users
-        WHERE reminder_time IS NOT NULL
-        """
-    )
-
-    for u in users:
-        local_time = (
-            utc_now + timedelta(hours=u["timezone_offset"])
-        ).time().replace(second=0, microsecond=0)
-
-        if local_time == u["reminder_time"]:
-            try:
-                await bot.send_message(
-                    u["telegram_id"],
-                    "⏰ Напоминание!\nТы отметил привычки сегодня?",
-                )
-            except Exception as e:
-                print("Reminder error:", e)
-
-    await db.close()
-
-
-# =========================
 # STARTUP
 # =========================
 
 async def on_startup(dp):
     await init_db()
-    scheduler.add_job(send_reminders, "interval", minutes=1)
-    scheduler.start()
     print("✅ Bot started successfully")
 
 
