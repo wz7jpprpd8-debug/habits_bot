@@ -9,30 +9,42 @@
 
   <style>
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont;
-      background: #f5f5f5;
       margin: 0;
       padding: 16px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont;
+      background: #f4f4f5;
     }
 
     h1 {
       margin-top: 0;
+      font-size: 22px;
     }
 
     .card {
       background: white;
-      padding: 12px;
-      border-radius: 10px;
+      border-radius: 12px;
+      padding: 14px;
       margin-bottom: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+
+    .title {
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .streak {
+      font-size: 14px;
+      color: #666;
     }
 
     button {
+      margin-top: 10px;
       width: 100%;
       padding: 12px;
-      margin-top: 8px;
-      font-size: 16px;
       border: none;
       border-radius: 8px;
+      font-size: 15px;
       cursor: pointer;
     }
 
@@ -44,93 +56,97 @@
     .delete {
       background: #ff4d4f;
       color: white;
+      margin-top: 6px;
+    }
+
+    .empty {
+      color: #666;
+      text-align: center;
+      margin-top: 40px;
     }
   </style>
 </head>
 
 <body>
   <h1>📋 Мои привычки</h1>
-  <div id="habits">Загрузка...</div>
+  <div id="list">Загрузка…</div>
 
-  <script>
-    const tg = window.Telegram.WebApp;
+<script>
+  const tg = window.Telegram.WebApp;
+  tg.expand();
 
-    // 🔑 ОБЯЗАТЕЛЬНО
-    tg.ready();
-    tg.expand();
+  // ❗ ВАЖНО: Mini App должен быть открыт ИЗ Telegram
+  if (!tg.initDataUnsafe?.user?.id) {
+    document.getElementById("list").innerHTML =
+      "❌ Открой приложение из Telegram";
+    throw new Error("Not opened from Telegram");
+  }
 
-    const habitsEl = document.getElementById("habits");
+  const TELEGRAM_ID = tg.initDataUnsafe.user.id;
+  const list = document.getElementById("list");
 
-    if (!tg.initDataUnsafe || !tg.initDataUnsafe.user) {
-      habitsEl.innerHTML = "❌ Открой приложение из Telegram";
-      throw new Error("No Telegram user");
+  async function api(path, data = {}) {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        telegram_id: TELEGRAM_ID,
+        ...data
+      })
+    });
+
+    if (!res.ok) {
+      throw new Error("API error");
     }
 
-    const telegramId = tg.initDataUnsafe.user.id;
+    return res.json();
+  }
 
-    async function api(path, body = {}) {
-      const res = await fetch(path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          telegram_id: telegramId,
-          ...body
-        })
+  async function loadHabits() {
+    list.innerHTML = "Загрузка…";
+
+    try {
+      const habits = await api("/api/habits");
+
+      if (!habits.length) {
+        list.innerHTML = `<div class="empty">Пока нет привычек 🙂</div>`;
+        return;
+      }
+
+      list.innerHTML = "";
+
+      habits.forEach(h => {
+        const div = document.createElement("div");
+        div.className = "card";
+
+        div.innerHTML = `
+          <div class="title">${h.title}</div>
+          <div class="streak">🔥 Серия: ${h.streak} дней</div>
+
+          <button class="done">✅ Выполнено</button>
+          <button class="delete">🗑 Удалить</button>
+        `;
+
+        div.querySelector(".done").onclick = async () => {
+          await api("/api/done", { habit_id: h.id });
+          loadHabits();
+        };
+
+        div.querySelector(".delete").onclick = async () => {
+          if (!confirm("Удалить привычку?")) return;
+          await api("/api/delete", { habit_id: h.id });
+          loadHabits();
+        };
+
+        list.appendChild(div);
       });
 
-      if (!res.ok) {
-        throw new Error("API error");
-      }
-
-      return res.json();
+    } catch (e) {
+      list.innerHTML = "⚠️ Ошибка загрузки данных";
     }
+  }
 
-    async function loadHabits() {
-      habitsEl.innerHTML = "Загрузка...";
-
-      try {
-        const habits = await api("/api/habits");
-
-        if (!habits.length) {
-          habitsEl.innerHTML = "Пока нет привычек";
-          return;
-        }
-
-        habitsEl.innerHTML = "";
-
-        habits.forEach(h => {
-          const div = document.createElement("div");
-          div.className = "card";
-
-          div.innerHTML = `
-            <b>${h.title}</b><br>
-            🔥 Серия: ${h.streak}
-
-            <button class="done">✅ Выполнено</button>
-            <button class="delete">🗑 Удалить</button>
-          `;
-
-          div.querySelector(".done").onclick = async () => {
-            await api("/api/done", { habit_id: h.id });
-            loadHabits();
-          };
-
-          div.querySelector(".delete").onclick = async () => {
-            if (!confirm("Удалить привычку?")) return;
-            await api("/api/delete", { habit_id: h.id });
-            loadHabits();
-          };
-
-          habitsEl.appendChild(div);
-        });
-
-      } catch (e) {
-        habitsEl.innerHTML = "⚠️ Ошибка загрузки данных";
-        console.error(e);
-      }
-    }
-
-    loadHabits();
-  </script>
+  loadHabits();
+</script>
 </body>
 </html>
