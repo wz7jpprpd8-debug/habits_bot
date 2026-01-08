@@ -251,11 +251,11 @@ async def list_habits(message: types.Message):
             f"🔥 Серия: {r['streak']} дней"
         )
 
-        kb = InlineKeyboardMarkup().add(
-            InlineKeyboardButton(
-                "✅ Выполнено сегодня",
-                callback_data=f"done:{r['id']}"
-            )
+       kb = InlineKeyboardMarkup(row_width=2)
+kb.add(
+    InlineKeyboardButton("✅ Выполнено", callback_data=f"done:{r['id']}"),
+    InlineKeyboardButton("🗑 Удалить", callback_data=f"delete:{r['id']}")
+)
         )
 
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
@@ -387,6 +387,20 @@ async def ai_analysis(message: types.Message):
 # =========================
 # CALLBACKS
 # =========================
+
+@dp.callback_query_handler(lambda c: c.data.startswith("delete:"))
+async def delete_habit(callback: types.CallbackQuery):
+    habit_id = int(callback.data.split(":")[1])
+
+    db = await get_db()
+    await db.execute(
+        "UPDATE habits SET is_active=FALSE WHERE id=$1",
+        habit_id
+    )
+    await db.close()
+
+    await callback.message.edit_text("🗑 Привычка удалена")
+    await callback.answer("Удалено")
 
 @dp.callback_query_handler(lambda c: c.data.startswith("done:"))
 async def mark_done(callback: types.CallbackQuery):
