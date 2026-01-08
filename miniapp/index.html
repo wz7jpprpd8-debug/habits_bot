@@ -31,6 +31,10 @@
       cursor: pointer;
     }
 
+    .danger {
+      background: #ff4d4f;
+    }
+
     .card {
       background: white;
       padding: 12px;
@@ -44,65 +48,6 @@
   <h1>📋 Мои привычки</h1>
 
   <div id="habits">Загрузка...</div>
-<script>
-  const tg = window.Telegram.WebApp;
-  tg.expand();
-
-  const habitsEl = document.getElementById("habits");
-
-  async function api(path, body = {}) {
-    return fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        telegram_id: tg.initDataUnsafe.user.id,
-        ...body
-      })
-    }).then(r => r.json());
-  }
-
-  async function loadHabits() {
-    habitsEl.innerHTML = "Загрузка...";
-
-    const habits = await api("/api/habits");
-
-    if (!habits.length) {
-      habitsEl.innerHTML = "Пока нет привычек";
-      return;
-    }
-
-    habitsEl.innerHTML = "";
-
-    habits.forEach(h => {
-      const div = document.createElement("div");
-      div.className = "card";
-
-      div.innerHTML = `
-        <b>${h.title}</b><br>
-        🔥 Серия: ${h.streak}
-        <div style="margin-top:8px">
-          <button onclick="done(${h.id})">✅ Выполнено</button>
-          <button onclick="del(${h.id})" style="background:#ff4d4f">🗑 Удалить</button>
-        </div>
-      `;
-
-      habitsEl.appendChild(div);
-    });
-  }
-
-  async function done(id) {
-    await api("/api/done", { habit_id: id });
-    loadHabits();
-  }
-
-  async function del(id) {
-    if (!confirm("Удалить привычку?")) return;
-    await api("/api/delete", { habit_id: id });
-    loadHabits();
-  }
-
-  loadHabits();
-</script>
 
   <script>
     const tg = window.Telegram.WebApp;
@@ -110,20 +55,24 @@
 
     const habitsEl = document.getElementById("habits");
 
-    async function loadHabits() {
-      habitsEl.innerHTML = "Загрузка...";
-
-      const res = await fetch("/api/habits", {
+    async function api(path, body = {}) {
+      const res = await fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          telegram_id: tg.initDataUnsafe.user.id
+          telegram_id: tg.initDataUnsafe?.user?.id,
+          ...body
         })
       });
+      return res.json();
+    }
 
-      const habits = await res.json();
+    async function loadHabits() {
+      habitsEl.innerHTML = "Загрузка...";
 
-      if (!habits.length) {
+      const habits = await api("/api/habits");
+
+      if (!habits || !habits.length) {
         habitsEl.innerHTML = "Пока нет привычек";
         return;
       }
@@ -133,12 +82,29 @@
       habits.forEach(h => {
         const div = document.createElement("div");
         div.className = "card";
+
         div.innerHTML = `
           <b>${h.title}</b><br>
           🔥 Серия: ${h.streak}
+          <div style="margin-top:8px">
+            <button onclick="doneHabit(${h.id})">✅ Выполнено</button>
+            <button class="danger" onclick="deleteHabit(${h.id})">🗑 Удалить</button>
+          </div>
         `;
+
         habitsEl.appendChild(div);
       });
+    }
+
+    async function doneHabit(id) {
+      await api("/api/done", { habit_id: id });
+      loadHabits();
+    }
+
+    async function deleteHabit(id) {
+      if (!confirm("Удалить привычку?")) return;
+      await api("/api/delete", { habit_id: id });
+      loadHabits();
     }
 
     loadHabits();
