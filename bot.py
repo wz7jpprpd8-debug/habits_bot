@@ -27,25 +27,20 @@ dp = Dispatcher(bot)
 
 @dp.message_handler(commands=["start"])
 async def start_cmd(message: types.Message):
-    print("START HANDLER CALLED")
-
-    keyboard = ReplyKeyboardMarkup(
-        resize_keyboard=True,
-        one_time_keyboard=False,
-    )
-
-    keyboard.add(
-        KeyboardButton(
-            text="🚀 Открыть приложение",
-            web_app=WebAppInfo(url=WEBAPP_URL),
-        )
-    )
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add(KeyboardButton("TEST BUTTON"))
 
     await message.answer(
-        "Привет 👋\n\nНажми кнопку ниже, чтобы открыть приложение:",
-        reply_markup=keyboard,
+        "Если ты видишь кнопку — клавиатура работает",
+        reply_markup=kb,
     )
 
+@dp.message_handler()
+async def echo(message: types.Message):
+    await message.answer(f"Ты нажал: {message.text}")
+
+if __name__ == "__main__":
+    executor.start_polling(dp, skip_updates=True)
 
 # =========================
 # FALLBACK (чтобы бот не молчал)
