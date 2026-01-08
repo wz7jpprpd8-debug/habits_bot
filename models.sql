@@ -26,4 +26,4 @@ CREATE TABLE IF NOT EXISTS habit_logs (
     UNIQUE (habit_id, date)
 );
 ALTER TABLE users
-ADD COLUMN IF NOT EXISTS reminder_time TIME;
+ADD COLUMN IF NOT EXISTS timezone_offset INT DEFAULT 0;
