@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.utils import executor
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 
 from aiohttp import web
 
@@ -69,18 +70,20 @@ async def start_cmd(message: types.Message):
     )
     await db.close()
 
-    kb = InlineKeyboardMarkup()
-    kb.add(
-        InlineKeyboardButton(
-            "📱 Открыть приложение",
-            web_app=WebAppInfo(url=WEBAPP_URL)
+   kb = ReplyKeyboardMarkup(resize_keyboard=True)
+kb.add(
+    KeyboardButton(
+        "🚀 Открыть приложение",
+        web_app=WebAppInfo(
+            url="https://storied-bubblegum-a94e6a.netlify.app"
         )
     )
+)
 
-    await message.answer(
-        "👋 Привет!\nОткрывай Mini App 👇",
-        reply_markup=kb
-    )
+await message.answer(
+    "Открой Mini App 👇",
+    reply_markup=kb
+)
 
 
 # =========================
