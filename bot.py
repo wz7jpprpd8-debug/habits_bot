@@ -74,6 +74,32 @@ async def start_cmd(message: types.Message):
         "/analysis — AI-анализ\n"
     )
 
+@dp.message_handler(commands=["reminder"])
+async def set_reminder(message: types.Message):
+    args = message.get_args()
+
+    try:
+        reminder_time = datetime.strptime(args, "%H:%M").time()
+    except:
+        await message.answer("Используй формат: /reminder 21:00")
+        return
+
+    db = await get_db()
+    await db.execute(
+        """
+        UPDATE users
+        SET reminder_time = $1
+        WHERE telegram_id = $2
+        """,
+        reminder_time,
+        message.from_user.id
+    )
+    await db.close()
+
+    await message.answer(
+        f"⏰ Напоминание установлено на {reminder_time.strftime('%H:%M')}"
+    )
+
 
 @dp.message_handler(commands=["add"])
 async def add_habit(message: types.Message):
