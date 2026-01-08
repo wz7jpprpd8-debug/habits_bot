@@ -2,6 +2,8 @@ import os
 import asyncpg
 import tempfile
 import matplotlib.pyplot as plt
+from aiohttp import web
+
 
 from datetime import date, timedelta, datetime, time
 
@@ -73,7 +75,66 @@ main_menu.add(
 
 async def get_db():
     return await asyncpg.connect(DATABASE_URL)
+# =========================
+# MINI APP API
+# =========================
 
+routes = web.RouteTableDef()
+
+
+@routes.post("/api/habits")
+async def api_habits(request):
+    data = await request.json()
+    uid = data["user_id"]
+
+    db = await get_db()
+    rows = await db.fetch("""
+        SELECT h.id, h.title, h.streak
+        FROM habits h
+        JOIN users u ON h.user_id=u.id
+        WHERE u.telegram_id=$1 AND h.is_active=TRUE
+    """, uid)
+    await db.close()
+
+    return web.json_response([dict(r) for r in rows])
+
+
+@routes.post("/api/done")
+async def api_done(request):
+    data = await request.json()
+    hid = data["habit_id"]
+
+    db = await get_db()
+    await db.execute("""
+        INSERT INTO habit_logs (habit_id, date)
+        VALUES ($1, CURRENT_DATE)
+        ON CONFLICT DO NOTHING
+    """, hid)
+
+    await db.execute("""
+        UPDATE habits
+        SET streak = streak + 1, last_completed = CURRENT_DATE
+        WHERE id=$1
+    """, hid)
+    await db.close()
+
+    return web.json_response({"ok": True})
+
+
+@routes.post("/api/delete")
+async def api_delete(request):
+    data = await request.json()
+    hid = data["habit_id"]
+
+    db = await get_db()
+    await db.execute(
+        "UPDATE habits SET is_active=FALSE WHERE id=$1",
+        hid
+    )
+    await db.close()
+
+    return web.json_response({"ok": True})
+    
 
 async def init_db():
     conn = await get_db()
@@ -418,9 +479,17 @@ async def send_reminders():
 
 async def on_startup(dp):
     await init_db()
-    scheduler.add_job(send_reminders, "interval", minutes=1)
-    scheduler.start()
-    print("✅ Bot started")
+
+    app = web.Application()
+    app.add_routes(routes)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    site = web.TCPSite(runner, "0.0.0.0", 8080)
+    await site.start()
+
+    print("✅ Bot + API started on port 8080")
 # =========================
 # TELEGRAM MINI APP
 # =========================
