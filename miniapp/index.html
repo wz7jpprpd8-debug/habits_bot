@@ -14,18 +14,22 @@
       padding: 16px;
       margin: 0;
     }
+
     h1 { margin-top: 0; }
+
     .card {
       background: #fff;
       border-radius: 12px;
       padding: 14px;
       margin-bottom: 12px;
     }
+
     .row {
       display: flex;
       gap: 8px;
       margin-top: 10px;
     }
+
     button {
       flex: 1;
       padding: 12px;
@@ -34,14 +38,34 @@
       font-size: 15px;
       cursor: pointer;
     }
+
     .primary { background: #2ea6ff; color: #fff; }
     .danger { background: #ff4d4f; color: #fff; }
+
+    input {
+      width: 100%;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid #ddd;
+      font-size: 15px;
+      box-sizing: border-box;
+    }
+
     .muted { color: #666; font-size: 14px; }
   </style>
 </head>
 
 <body>
   <h1>📋 Мои привычки</h1>
+
+  <!-- ADD HABIT -->
+  <div class="card">
+    <input id="newHabit" placeholder="Новая привычка…" />
+    <div class="row">
+      <button class="primary" onclick="addHabit()">➕ Добавить</button>
+    </div>
+  </div>
+
   <div id="status" class="muted">Загрузка…</div>
   <div id="habits"></div>
 
@@ -62,24 +86,33 @@
     const r = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ telegram_id: telegramId, ...body })
+      body: JSON.stringify({
+        telegram_id: telegramId,
+        ...body
+      })
     });
+
+    if (!r.ok) throw new Error("API error");
     return r.json();
   }
 
   async function loadHabits() {
     const el = document.getElementById("habits");
-    el.innerHTML = "Загрузка…";
+    const status = document.getElementById("status");
+
+    el.innerHTML = "";
+    status.innerText = "Загрузка…";
 
     try {
       const habits = await api("/api/habits");
 
       if (!habits.length) {
-        el.innerHTML = "<div class='muted'>Пока нет привычек</div>";
+        status.innerText = "Пока нет привычек";
         return;
       }
 
-      el.innerHTML = "";
+      status.innerText = "";
+
       habits.forEach(h => {
         const div = document.createElement("div");
         div.className = "card";
@@ -88,13 +121,31 @@
           🔥 Серия: ${h.streak}
           <div class="row">
             <button class="primary" onclick="done(${h.id})">✅ Выполнено</button>
-            <button class="danger" onclick="del(${h.id})">🗑</button>
+            <button class="danger" onclick="delHabit(${h.id})">🗑</button>
           </div>
         `;
         el.appendChild(div);
       });
+    } catch (e) {
+      status.innerText = "⚠️ Ошибка загрузки";
+    }
+  }
+
+  async function addHabit() {
+    const input = document.getElementById("newHabit");
+    const title = input.value.trim();
+
+    if (title.length < 2) {
+      alert("Введите название привычки");
+      return;
+    }
+
+    try {
+      await api("/api/add", { title });
+      input.value = "";
+      loadHabits();
     } catch {
-      el.innerHTML = "<div class='muted'>⚠️ Ошибка загрузки</div>";
+      alert("Ошибка добавления привычки");
     }
   }
 
@@ -103,7 +154,7 @@
     loadHabits();
   }
 
-  async function del(id) {
+  async function delHabit(id) {
     if (!confirm("Удалить привычку?")) return;
     await api("/api/delete", { habit_id: id });
     loadHabits();
