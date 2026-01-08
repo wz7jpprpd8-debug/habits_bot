@@ -108,12 +108,14 @@ async def start_cmd(message: types.Message):
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
 
-    kb.add(
-        KeyboardButton(
-            "🚀 Открыть приложение",
-            web_app=WebAppInfo(url=os.getenv("WEBAPP_URL"))
+    # ✅ КНОПКА MINI APP — ТОЛЬКО ЕСЛИ URL ЕСТЬ
+    if WEBAPP_URL:
+        kb.add(
+            KeyboardButton(
+                "🚀 Открыть приложение",
+                web_app=types.WebAppInfo(url=WEBAPP_URL)
+            )
         )
-    )
 
     kb.add(
         KeyboardButton("➕ Добавить привычку"),
@@ -129,11 +131,9 @@ async def start_cmd(message: types.Message):
 
     await message.answer(
         "👋 Привет!\n\n"
-        "Это твой трекер привычек 👇\n"
-        "Открой приложение или пользуйся ботом",
+        "Это твой трекер привычек 👇",
         reply_markup=kb,
     )
-
 
 # =========================
 # ADD HABIT
