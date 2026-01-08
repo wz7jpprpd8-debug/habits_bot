@@ -251,14 +251,23 @@ async def list_habits(message: types.Message):
             f"🔥 Серия: {r['streak']} дней"
         )
 
-       kb = InlineKeyboardMarkup(row_width=2)
-kb.add(
-    InlineKeyboardButton("✅ Выполнено", callback_data=f"done:{r['id']}"),
-    InlineKeyboardButton("🗑 Удалить", callback_data=f"delete:{r['id']}")
-)
+        kb = InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            InlineKeyboardButton(
+                "✅ Выполнено",
+                callback_data=f"done:{r['id']}"
+            ),
+            InlineKeyboardButton(
+                "🗑 Удалить",
+                callback_data=f"delete:{r['id']}"
+            )
         )
 
-        await message.answer(text, reply_markup=kb, parse_mode="HTML")
+        await message.answer(
+            text,
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
 
 
 @dp.message_handler(commands=["stats"])
