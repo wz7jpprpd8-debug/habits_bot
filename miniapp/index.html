@@ -2,21 +2,25 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <title>Habits</title>
+  <title>Habits Mini App</title>
 
-  <!-- Telegram SDK -->
+  <!-- Telegram Mini App SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 
   <style>
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont;
-      background: #f5f5f5;
       margin: 0;
       padding: 16px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #f6f7f9;
+      color: #111;
     }
 
     h1 {
       margin-top: 0;
+      font-size: 22px;
     }
 
     .card {
@@ -24,138 +28,83 @@
       border-radius: 12px;
       padding: 14px;
       margin-bottom: 12px;
-      box-shadow: 0 6px 20px rgba(0,0,0,.06);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
     }
 
     button {
       width: 100%;
-      padding: 12px;
-      margin-top: 8px;
-      border-radius: 8px;
-      border: none;
+      padding: 14px;
+      margin-top: 10px;
       font-size: 16px;
+      border: none;
+      border-radius: 10px;
       cursor: pointer;
-    }
-
-    .primary {
       background: #2ea6ff;
-      color: white;
+      color: #fff;
     }
 
-    .danger {
-      background: #ff4d4f;
-      color: white;
+    button.secondary {
+      background: #e5e7eb;
+      color: #111;
     }
 
-    .ghost {
-      background: #eee;
-    }
-
-    .add {
-      position: fixed;
-      bottom: 20px;
-      left: 16px;
-      right: 16px;
+    .muted {
+      color: #666;
+      font-size: 14px;
     }
   </style>
 </head>
-
 <body>
-  <h1>📋 Мои привычки</h1>
-  <div id="habits">Загрузка…</div>
 
-  <div class="add">
-    <button class="primary" onclick="addHabit()">➕ Добавить привычку</button>
+  <h1>📋 Мои привычки</h1>
+
+  <div id="status" class="muted">Загрузка...</div>
+
+  <div id="content" style="display:none">
+
+    <div class="card">
+      <b>Тестовая привычка</b><br>
+      🔥 Серия: 3 дня
+      <button onclick="markDone()">✅ Выполнено</button>
+    </div>
+
+    <button class="secondary" onclick="closeApp()">❌ Закрыть</button>
+
   </div>
 
-<script>
-  const tg = Telegram.WebApp;
-  tg.expand();
+  <script>
+    const tg = window.Telegram?.WebApp;
 
-  const habitsEl = document.getElementById("habits");
-
-  // ❌ Если открыли НЕ из Telegram — показываем сообщение
-  if (!tg.initDataUnsafe || !tg.initDataUnsafe.user) {
-    habitsEl.innerHTML = "❌ Открой приложение из Telegram";
-    throw new Error("Not in Telegram");
-  }
-
-  const TELEGRAM_ID = tg.initDataUnsafe.user.id;
-
-  async function api(path, body = {}) {
-    try {
-      const res = await fetch(path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          telegram_id: TELEGRAM_ID,
-          ...body
-        })
-      });
-
-      return await res.json();
-    } catch (e) {
-      habitsEl.innerHTML = "⚠️ Ошибка загрузки данных";
-      throw e;
-    }
-  }
-
-  async function loadHabits() {
-    habitsEl.innerHTML = "Загрузка…";
-
-    const habits = await api("/api/habits");
-
-    if (!habits.length) {
-      habitsEl.innerHTML = "Пока нет привычек 🙂";
-      return;
+    // ❌ Открыто не из Telegram
+    if (!tg) {
+      document.getElementById("status").innerText =
+        "❌ Открой Mini App из Telegram";
+      throw new Error("Not in Telegram");
     }
 
-    habitsEl.innerHTML = "";
+    // ✅ Инициализация
+    tg.ready();
+    tg.expand();
 
-    habits.forEach(h => {
-      const div = document.createElement("div");
-      div.className = "card";
+    const user = tg.initDataUnsafe?.user;
 
-      div.innerHTML = `
-        <b>${h.title}</b><br>
-        🔥 Серия: ${h.streak}
+    document.getElementById("status").innerText =
+      user
+        ? `👤 ${user.first_name}`
+        : "👤 Пользователь";
 
-        <button class="primary" onclick="done(${h.id})">
-          ✅ Выполнено
-        </button>
+    document.getElementById("content").style.display = "block";
 
-        <button class="danger" onclick="delHabit(${h.id})">
-          🗑 Удалить
-        </button>
-      `;
+    // ===== actions =====
 
-      habitsEl.appendChild(div);
-    });
-  }
+    function markDone() {
+      tg.showAlert("✅ Привычка отмечена (тест)");
+    }
 
-  async function done(id) {
-    tg.HapticFeedback.impactOccurred("light");
-    await api("/api/done", { habit_id: id });
-    loadHabits();
-  }
+    function closeApp() {
+      tg.close();
+    }
+  </script>
 
-  async function delHabit(id) {
-    if (!confirm("Удалить привычку?")) return;
-    tg.HapticFeedback.impactOccurred("medium");
-    await api("/api/delete", { habit_id: id });
-    loadHabits();
-  }
-
-  async function addHabit() {
-    const title = prompt("Название привычки");
-    if (!title || title.length < 2) return;
-
-    tg.HapticFeedback.impactOccurred("light");
-    await api("/api/add", { title });
-    loadHabits();
-  }
-
-  loadHabits();
-</script>
 </body>
 </html>
