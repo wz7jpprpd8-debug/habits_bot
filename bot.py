@@ -88,11 +88,11 @@ async def start_cmd(message: types.Message):
 
 @dp.message_handler(lambda m: m.text == "➕ Добавить привычку")
 async def add_habit_button(message: types.Message):
+    waiting_for_habit_name.add(message.from_user.id)
     await message.answer(
-        "✏️ Напиши название привычки:\n"
+        "✏️ Напиши название привычки\n\n"
         "Пример: Чтение"
     )
-
 @dp.message_handler(lambda m: m.text == "📋 Мои привычки")
 async def list_button(message: types.Message):
     await list_habits(message)
@@ -124,7 +124,28 @@ async def settings_menu(message: types.Message):
         "ℹ️ /start"
     )
 
+@dp.message_handler()
+async def catch_habit_name(message: types.Message):
+    if message.from_user.id not in waiting_for_habit_name:
+        return
 
+    title = message.text.strip()
+    waiting_for_habit_name.remove(message.from_user.id)
+
+    db = await get_db()
+    user = await db.fetchrow(
+        "SELECT id FROM users WHERE telegram_id=$1",
+        message.from_user.id
+    )
+
+    await db.execute(
+        "INSERT INTO habits (user_id, title) VALUES ($1, $2)",
+        user["id"], title
+    )
+    await db.close()
+
+    await message.answer(f"✅ Привычка «{title}» добавлена", reply_markup=main_menu)
+    
 @dp.message_handler(commands=["timezone"])
 async def set_timezone(message: types.Message):
     args = message.get_args().strip()
