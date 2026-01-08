@@ -53,7 +53,12 @@
     const tg = window.Telegram.WebApp;
     tg.expand();
 
+    
+    habitsEl.innerHTML = "DEBUG: app loaded";
+    
     const habitsEl = document.getElementById("habits");
+
+    console.log("TG INIT DATA:", tg.initDataUnsafe);
 
     async function api(path, body = {}) {
       const res = await fetch(path, {
