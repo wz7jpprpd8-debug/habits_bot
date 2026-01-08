@@ -4,3 +4,4 @@ python-dotenv
 apscheduler
 matplotlib
 openai
+pip install fastapi uvicorn asyncpg
