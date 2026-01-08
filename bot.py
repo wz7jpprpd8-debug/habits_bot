@@ -1,5 +1,4 @@
 import os
-import asyncio
 import asyncpg
 import tempfile
 import matplotlib.pyplot as plt
@@ -18,8 +17,6 @@ from aiogram.utils import executor
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import OpenAI
-
-from aiohttp import web
 
 
 # =========================
@@ -52,16 +49,22 @@ async def get_db():
 async def init_db():
     db = await get_db()
 
+    # users
     await db.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         telegram_id BIGINT UNIQUE,
         timezone_offset INT DEFAULT 0,
-        reminder_time TIME,
-        last_reminder DATE
+        reminder_time TIME
     );
     """)
 
+    # безопасно добавляем колонку
+    await db.execute(
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_reminder DATE"
+    )
+
+    # habits
     await db.execute("""
     CREATE TABLE IF NOT EXISTS habits (
         id SERIAL PRIMARY KEY,
@@ -73,6 +76,7 @@ async def init_db():
     );
     """)
 
+    # habit logs
     await db.execute("""
     CREATE TABLE IF NOT EXISTS habit_logs (
         id SERIAL PRIMARY KEY,
@@ -91,6 +95,7 @@ async def init_db():
 def main_kb():
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
 
+    # ✅ MINI APP КНОПКА
     if WEBAPP_URL:
         kb.add(
             KeyboardButton(
@@ -110,6 +115,7 @@ def main_kb():
     kb.add(
         KeyboardButton("⏰ Напоминания"),
     )
+
     return kb
 
 
@@ -161,7 +167,8 @@ async def add_habit(message: types.Message):
 
     await db.execute(
         "INSERT INTO habits (user_id, title) VALUES ($1, $2)",
-        user["id"], title,
+        user["id"],
+        title,
     )
     await db.close()
 
@@ -183,6 +190,7 @@ async def list_habits(message: types.Message):
         FROM habits h
         JOIN users u ON h.user_id=u.id
         WHERE u.telegram_id=$1 AND h.is_active=TRUE
+        ORDER BY h.id
     """, message.from_user.id)
     await db.close()
 
@@ -219,15 +227,20 @@ async def mark_done(callback: types.CallbackQuery):
         habit_id,
     )
 
+    if habit["last_completed"] == today:
+        await callback.answer("Уже отмечено сегодня")
+        await db.close()
+        return
+
     streak = habit["streak"] + 1 if habit["last_completed"] == today - timedelta(days=1) else 1
 
     await db.execute(
-        "UPDATE habits SET streak=$1, last_completed=$2 WHERE id=$3",
-        streak, today, habit_id,
-    )
-    await db.execute(
         "INSERT INTO habit_logs (habit_id, date) VALUES ($1, $2)",
         habit_id, today,
+    )
+    await db.execute(
+        "UPDATE habits SET streak=$1, last_completed=$2 WHERE id=$3",
+        streak, today, habit_id,
     )
     await db.close()
 
@@ -250,94 +263,84 @@ async def delete_habit(callback: types.CallbackQuery):
 
 
 # =========================
-# MINI APP BACKEND (API)
+# REMINDERS
 # =========================
 
-routes = web.RouteTableDef()
-
-@routes.post("/api/habits")
-async def api_habits(request):
-    data = await request.json()
-    telegram_id = data["telegram_id"]
-
-    db = await get_db()
-    rows = await db.fetch("""
-        SELECT h.id, h.title, h.streak
-        FROM habits h
-        JOIN users u ON h.user_id=u.id
-        WHERE u.telegram_id=$1 AND h.is_active=TRUE
-    """, telegram_id)
-    await db.close()
-
-    return web.json_response([
-        {"id": r["id"], "title": r["title"], "streak": r["streak"]}
-        for r in rows
-    ])
-
-
-@routes.post("/api/add")
-async def api_add(request):
-    data = await request.json()
-    telegram_id = data["telegram_id"]
-    title = data["title"]
-
-    db = await get_db()
-    user = await db.fetchrow(
-        "SELECT id FROM users WHERE telegram_id=$1",
-        telegram_id,
+@dp.message_handler(lambda m: m.text == "⏰ Напоминания")
+async def reminder_help(message: types.Message):
+    await message.answer(
+        "⏰ Напоминания\n\n"
+        "/timezone +3 — часовой пояс\n"
+        "/reminder 21:00 — время напоминания",
     )
 
-    await db.execute(
-        "INSERT INTO habits (user_id, title) VALUES ($1, $2)",
-        user["id"], title,
-    )
-    await db.close()
 
-    return web.json_response({"ok": True})
-
-
-@routes.post("/api/done")
-async def api_done(request):
-    data = await request.json()
-    habit_id = data["habit_id"]
+@dp.message_handler(commands=["timezone"])
+async def set_timezone(message: types.Message):
+    try:
+        offset = int(message.get_args())
+    except:
+        await message.answer("Пример: /timezone +3")
+        return
 
     db = await get_db()
     await db.execute(
-        "UPDATE habits SET streak=streak+1, last_completed=$1 WHERE id=$2",
-        date.today(), habit_id,
+        "UPDATE users SET timezone_offset=$1 WHERE telegram_id=$2",
+        offset, message.from_user.id,
     )
     await db.close()
 
-    return web.json_response({"ok": True})
+    await message.answer(f"🌍 Часовой пояс: UTC{offset:+}")
 
 
-@routes.post("/api/delete")
-async def api_delete(request):
-    data = await request.json()
-    habit_id = data["habit_id"]
+@dp.message_handler(commands=["reminder"])
+async def set_reminder(message: types.Message):
+    try:
+        t = datetime.strptime(message.get_args(), "%H:%M").time()
+    except:
+        await message.answer("Формат: /reminder 21:00")
+        return
 
     db = await get_db()
     await db.execute(
-        "UPDATE habits SET is_active=FALSE WHERE id=$1",
-        habit_id,
+        "UPDATE users SET reminder_time=$1 WHERE telegram_id=$2",
+        t, message.from_user.id,
     )
     await db.close()
 
-    return web.json_response({"ok": True})
+    await message.answer(f"⏰ Напоминание установлено на {t.strftime('%H:%M')}")
 
 
-async def start_web():
-    app = web.Application()
-    app.add_routes(routes)
+async def send_reminders():
+    utc_now = datetime.utcnow()
+    today = utc_now.date()
 
-    runner = web.AppRunner(app)
-    await runner.setup()
+    db = await get_db()
+    users = await db.fetch("""
+        SELECT telegram_id, timezone_offset, reminder_time, last_reminder
+        FROM users
+        WHERE reminder_time IS NOT NULL
+    """)
 
-    port = int(os.getenv("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
+    for u in users:
+        local_time = (
+            utc_now + timedelta(hours=u["timezone_offset"])
+        ).time().replace(second=0, microsecond=0)
 
-    print(f"🌐 Mini App API running on port {port}")
+        if local_time == u["reminder_time"] and u["last_reminder"] != today:
+            try:
+                await bot.send_message(
+                    u["telegram_id"],
+                    "⏰ Напоминание!\nТы отметил привычки сегодня?",
+                )
+                await db.execute(
+                    "UPDATE users SET last_reminder=$1 WHERE telegram_id=$2",
+                    today, u["telegram_id"],
+                )
+            except Exception as e:
+                print("Reminder error:", e)
+
+    await db.close()
 
 
 # =========================
@@ -346,10 +349,9 @@ async def start_web():
 
 async def on_startup(_):
     await init_db()
+    scheduler.add_job(send_reminders, "interval", minutes=1)
     scheduler.start()
-    asyncio.create_task(start_web())
-
-    print("✅ Bot + Mini App backend started")
+    print("✅ Bot started with habits, AI, stats and reminders")
     print("WEBAPP_URL =", WEBAPP_URL)
 
 
