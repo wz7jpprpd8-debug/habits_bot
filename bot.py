@@ -572,13 +572,5 @@ async def on_startup(_):
     await init_db()
     scheduler.add_job(send_reminders, "interval", minutes=1)
     scheduler.start()
-    print("✅ Bot started with habits, AI, stats and reminders")
-    print("WEBAPP_URL =", WEBAPP_URL)
-
-
-if __name__ == "__main__":
-    executor.start_polling(
-        dp,
-        skip_updates=True,
-        on_startup=on_startup,
-    )
+    await start_web()
+    print("✅ Bot + Mini App backend started")
