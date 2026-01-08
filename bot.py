@@ -30,6 +30,8 @@ if not BOT_TOKEN or not DATABASE_URL:
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
+scheduler = AsyncIOScheduler()  # ← ВОТ ЗДЕСЬ
+
 ai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 
@@ -318,10 +320,98 @@ async def ai_analysis(message: types.Message):
         print("AI ERROR:", e)
 
 
+@dp.message_handler(commands=["timezone"])
+async def set_timezone(message: types.Message):
+    try:
+        offset = int(message.get_args())
+        if offset < -12 or offset > 14:
+            raise ValueError
+    except:
+        await message.answer("Пример: /timezone +3")
+        return
+
+    db = await get_db()
+    await db.execute(
+        "UPDATE users SET timezone_offset=$1 WHERE telegram_id=$2",
+        offset, message.from_user.id,
+    )
+    await db.close()
+
+    sign = "+" if offset >= 0 else ""
+    await message.answer(f"🌍 Часовой пояс установлен: UTC{sign}{offset}")
+
+@dp.message_handler(commands=["reminder"])
+async def set_reminder(message: types.Message):
+    try:
+        t = datetime.strptime(message.get_args(), "%H:%M").time()
+    except:
+        await message.answer("Формат: /reminder 21:00")
+        return
+
+    db = await get_db()
+    await db.execute(
+        "UPDATE users SET reminder_time=$1 WHERE telegram_id=$2",
+        t, message.from_user.id,
+    )
+    await db.close()
+
+    await message.answer(f"⏰ Напоминание установлено на {t.strftime('%H:%M')}")
+
+async def send_reminders():
+    utc_now = datetime.utcnow()
+    today = utc_now.date()
+
+    db = await get_db()
+    users = await db.fetch("""
+        SELECT telegram_id, timezone_offset, reminder_time, last_reminder
+        FROM users
+        WHERE reminder_time IS NOT NULL
+    """)
+
+    for u in users:
+        # локальное время пользователя
+        local_time = (
+            utc_now + timedelta(hours=u["timezone_offset"])
+        ).time().replace(second=0, microsecond=0)
+
+        # ❗ напоминание ровно в минуту
+        if local_time == u["reminder_time"]:
+            # ❗ не чаще 1 раза в день
+            if u["last_reminder"] == today:
+                continue
+
+            try:
+                await bot.send_message(
+                    u["telegram_id"],
+                    "⏰ Напоминание!\nТы отметил привычки сегодня? 👇",
+                )
+                await db.execute(
+                    "UPDATE users SET last_reminder=$1 WHERE telegram_id=$2",
+                    today, u["telegram_id"],
+                )
+            except Exception as e:
+                print("Reminder error:", e)
+
+    await db.close()
+
+
+
 # =========================
 # STARTUP
 # =========================
 
+async def on_startup(_):
+    await init_db()
+
+    scheduler.add_job(
+        send_reminders,
+        trigger="interval",
+        minutes=1,
+    )
+    scheduler.start()
+
+    print("✅ Bot started with reminders")
+    
 async def on_startup(_):
     await init_db()
     print("✅ Bot started (habits + stats + AI)")
