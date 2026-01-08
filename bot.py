@@ -1,7 +1,14 @@
 import os
 import asyncpg
+from datetime import date, timedelta
+
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import (
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
 from aiogram.utils import executor
 
 # =========================
@@ -40,6 +47,7 @@ async def init_db():
         user_id INT,
         title TEXT,
         streak INT DEFAULT 0,
+        last_completed DATE,
         is_active BOOLEAN DEFAULT TRUE
     );
     """)
@@ -80,12 +88,12 @@ async def start_cmd(message: types.Message):
 # =========================
 
 @dp.message_handler(lambda m: m.text == "➕ Добавить привычку")
-async def ask_habit_name(message: types.Message):
+async def ask_habit(message: types.Message):
     await message.answer("Напиши название привычки ✏️")
 
 @dp.message_handler(lambda m: m.text not in [
     "➕ Добавить привычку",
-    "📋 Мои привычки"
+    "📋 Мои привычки",
 ])
 async def save_habit(message: types.Message):
     title = message.text.strip()
@@ -95,7 +103,6 @@ async def save_habit(message: types.Message):
         return
 
     db = await get_db()
-
     user = await db.fetchrow(
         "SELECT id FROM users WHERE telegram_id=$1",
         message.from_user.id
@@ -105,7 +112,6 @@ async def save_habit(message: types.Message):
         "INSERT INTO habits (user_id, title) VALUES ($1, $2)",
         user["id"], title
     )
-
     await db.close()
 
     await message.answer(
@@ -120,26 +126,75 @@ async def save_habit(message: types.Message):
 @dp.message_handler(lambda m: m.text == "📋 Мои привычки")
 async def list_habits(message: types.Message):
     db = await get_db()
-
     rows = await db.fetch("""
-        SELECT title, streak
+        SELECT h.id, h.title, h.streak
         FROM habits h
-        JOIN users u ON h.user_id = u.id
+        JOIN users u ON h.user_id=u.id
         WHERE u.telegram_id=$1 AND h.is_active=TRUE
         ORDER BY h.id
     """, message.from_user.id)
-
     await db.close()
 
     if not rows:
         await message.answer("У тебя пока нет привычек 🙂")
         return
 
-    text = "📋 <b>Мои привычки</b>\n\n"
     for r in rows:
-        text += f"• {r['title']} — 🔥 {r['streak']} дней\n"
+        kb = InlineKeyboardMarkup()
+        kb.add(
+            InlineKeyboardButton(
+                "✅ Выполнено сегодня",
+                callback_data=f"done:{r['id']}"
+            )
+        )
 
-    await message.answer(text, parse_mode="HTML")
+        await message.answer(
+            f"📌 <b>{r['title']}</b>\n🔥 Серия: {r['streak']} дней",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+
+# =========================
+# CALLBACK: DONE
+# =========================
+
+@dp.callback_query_handler(lambda c: c.data.startswith("done:"))
+async def mark_done(callback: types.CallbackQuery):
+    habit_id = int(callback.data.split(":")[1])
+    today = date.today()
+
+    db = await get_db()
+
+    habit = await db.fetchrow(
+        "SELECT streak, last_completed FROM habits WHERE id=$1",
+        habit_id
+    )
+
+    if habit["last_completed"] == today:
+        await callback.answer("Уже отмечено сегодня 👍", show_alert=True)
+        await db.close()
+        return
+
+    if habit["last_completed"] == today - timedelta(days=1):
+        streak = habit["streak"] + 1
+    else:
+        streak = 1
+
+    await db.execute(
+        """
+        UPDATE habits
+        SET streak=$1, last_completed=$2
+        WHERE id=$3
+        """,
+        streak, today, habit_id
+    )
+
+    await db.close()
+
+    await callback.answer(
+        f"🔥 Готово! Серия: {streak} дней",
+        show_alert=True
+    )
 
 # =========================
 # FALLBACK
@@ -158,7 +213,7 @@ async def fallback(message: types.Message):
 
 async def on_startup(_):
     await init_db()
-    print("✅ Bot started")
+    print("✅ Bot started with DONE button")
 
 if __name__ == "__main__":
     executor.start_polling(
