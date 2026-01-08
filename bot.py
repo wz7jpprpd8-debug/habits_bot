@@ -362,7 +362,11 @@ async def send_reminders():
 
 async def on_startup(dp):
     await init_db()
-    print("✅ Bot started with inline buttons, streaks and stats")
+
+    scheduler.add_job(send_reminders, "interval", minutes=1)
+    scheduler.start()
+
+    print("✅ Bot started with reminders")
 
 
 if __name__ == "__main__":
