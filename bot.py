@@ -421,7 +421,27 @@ async def on_startup(dp):
     scheduler.add_job(send_reminders, "interval", minutes=1)
     scheduler.start()
     print("✅ Bot started")
+# =========================
+# TELEGRAM MINI APP
+# =========================
 
+from aiogram.types import WebAppInfo
+
+@dp.message_handler(commands=["app"])
+async def open_mini_app(message: types.Message):
+    kb = InlineKeyboardMarkup().add(
+        InlineKeyboardButton(
+            text="📱 Открыть Habit Tracker",
+            web_app=WebAppInfo(
+                url="https://storied-bubblegum-a94e6a.netlify.app"
+            )
+        )
+    )
+
+    await message.answer(
+        "📱 Открой удобный интерфейс привычек:",
+        reply_markup=kb
+    )
 
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
