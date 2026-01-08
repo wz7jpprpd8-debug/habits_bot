@@ -11,9 +11,9 @@ from aiogram.types import (
     KeyboardButton,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    WebAppInfo,
 )
 from aiogram.utils import executor
+from aiogram.types import WebAppInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import OpenAI
@@ -81,13 +81,12 @@ async def init_db():
 def main_kb():
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
 
-    if WEBAPP_URL:
-        kb.add(
-            KeyboardButton(
-                "🚀 Открыть приложение",
-                web_app=WebAppInfo(url=WEBAPP_URL)
-            )
+    kb.add(
+        KeyboardButton(
+            "🚀 Открыть приложение",
+            web_app=WebAppInfo(url=WEBAPP_URL)
         )
+    )
 
     kb.add(
         KeyboardButton("➕ Добавить привычку"),
@@ -100,6 +99,7 @@ def main_kb():
     kb.add(
         KeyboardButton("⏰ Напоминания"),
     )
+
     return kb
 
 # =========================
