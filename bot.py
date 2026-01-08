@@ -70,6 +70,10 @@ async def init_db():
         habit_id INT,
         date DATE
     );
+
+    await db.execute(
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_reminder DATE"
+)
     """)
     await db.close()
 
