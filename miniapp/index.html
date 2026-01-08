@@ -2,151 +2,87 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <title>Habits</title>
+  <title>Habits Mini App</title>
 
-  <!-- Telegram Mini App SDK -->
+  <!-- Telegram WebApp SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <style>
     body {
       margin: 0;
       padding: 16px;
       font-family: system-ui, -apple-system, BlinkMacSystemFont;
-      background: #f4f4f5;
+      background: #f5f5f5;
     }
 
     h1 {
       margin-top: 0;
-      font-size: 22px;
     }
 
     .card {
       background: white;
       border-radius: 12px;
-      padding: 14px;
+      padding: 16px;
       margin-bottom: 12px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.05);
     }
 
-    .title {
-      font-weight: 600;
-      margin-bottom: 6px;
-    }
-
-    .streak {
-      font-size: 14px;
-      color: #666;
-    }
-
     button {
-      margin-top: 10px;
       width: 100%;
-      padding: 12px;
+      padding: 14px;
+      font-size: 16px;
+      border-radius: 10px;
       border: none;
-      border-radius: 8px;
-      font-size: 15px;
+      background: #2ea6ff;
+      color: white;
       cursor: pointer;
     }
 
-    .done {
-      background: #2ea6ff;
-      color: white;
+    button:active {
+      opacity: 0.9;
     }
 
-    .delete {
-      background: #ff4d4f;
-      color: white;
-      margin-top: 6px;
-    }
-
-    .empty {
-      color: #666;
-      text-align: center;
-      margin-top: 40px;
+    .muted {
+      color: #777;
+      font-size: 14px;
     }
   </style>
 </head>
 
 <body>
+
   <h1>📋 Мои привычки</h1>
-  <div id="list">Загрузка…</div>
 
-<script>
-  const tg = window.Telegram.WebApp;
-  tg.expand();
+  <div class="card">
+    <div class="muted">Telegram ID:</div>
+    <div id="tg-id">—</div>
+  </div>
 
-  // ❗ ВАЖНО: Mini App должен быть открыт ИЗ Telegram
-  if (!tg.initDataUnsafe?.user?.id) {
-    document.getElementById("list").innerHTML =
-      "❌ Открой приложение из Telegram";
-    throw new Error("Not opened from Telegram");
-  }
+  <div class="card">
+    <button onclick="testAction()">✅ Mini App работает</button>
+  </div>
 
-  const TELEGRAM_ID = tg.initDataUnsafe.user.id;
-  const list = document.getElementById("list");
+  <script>
+    const tg = window.Telegram.WebApp;
 
-  async function api(path, data = {}) {
-    const res = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        telegram_id: TELEGRAM_ID,
-        ...data
-      })
-    });
+    // Раскрываем Mini App на весь экран
+    tg.expand();
 
-    if (!res.ok) {
-      throw new Error("API error");
+    // Показываем telegram_id
+    const user = tg.initDataUnsafe?.user;
+
+    if (user) {
+      document.getElementById("tg-id").innerText = user.id;
+    } else {
+      document.getElementById("tg-id").innerText = "Открой из Telegram";
     }
 
-    return res.json();
-  }
-
-  async function loadHabits() {
-    list.innerHTML = "Загрузка…";
-
-    try {
-      const habits = await api("/api/habits");
-
-      if (!habits.length) {
-        list.innerHTML = `<div class="empty">Пока нет привычек 🙂</div>`;
-        return;
-      }
-
-      list.innerHTML = "";
-
-      habits.forEach(h => {
-        const div = document.createElement("div");
-        div.className = "card";
-
-        div.innerHTML = `
-          <div class="title">${h.title}</div>
-          <div class="streak">🔥 Серия: ${h.streak} дней</div>
-
-          <button class="done">✅ Выполнено</button>
-          <button class="delete">🗑 Удалить</button>
-        `;
-
-        div.querySelector(".done").onclick = async () => {
-          await api("/api/done", { habit_id: h.id });
-          loadHabits();
-        };
-
-        div.querySelector(".delete").onclick = async () => {
-          if (!confirm("Удалить привычку?")) return;
-          await api("/api/delete", { habit_id: h.id });
-          loadHabits();
-        };
-
-        list.appendChild(div);
-      });
-
-    } catch (e) {
-      list.innerHTML = "⚠️ Ошибка загрузки данных";
+    function testAction() {
+      tg.showAlert("🚀 Mini App запущен и работает");
     }
-  }
+  </script>
 
-  loadHabits();
-</script>
 </body>
 </html>
