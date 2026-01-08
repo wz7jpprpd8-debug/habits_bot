@@ -2,19 +2,17 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <title>Habits Mini App</title>
+  <title>Habits</title>
 
-  <!-- Telegram WebApp SDK -->
+  <!-- Telegram SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <style>
     body {
-      margin: 0;
-      padding: 16px;
       font-family: system-ui, -apple-system, BlinkMacSystemFont;
       background: #f5f5f5;
+      margin: 0;
+      padding: 16px;
     }
 
     h1 {
@@ -22,67 +20,142 @@
     }
 
     .card {
-      background: white;
+      background: #fff;
       border-radius: 12px;
-      padding: 16px;
+      padding: 14px;
       margin-bottom: 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+      box-shadow: 0 6px 20px rgba(0,0,0,.06);
     }
 
     button {
       width: 100%;
-      padding: 14px;
-      font-size: 16px;
-      border-radius: 10px;
+      padding: 12px;
+      margin-top: 8px;
+      border-radius: 8px;
       border: none;
-      background: #2ea6ff;
-      color: white;
+      font-size: 16px;
       cursor: pointer;
     }
 
-    button:active {
-      opacity: 0.9;
+    .primary {
+      background: #2ea6ff;
+      color: white;
     }
 
-    .muted {
-      color: #777;
-      font-size: 14px;
+    .danger {
+      background: #ff4d4f;
+      color: white;
+    }
+
+    .ghost {
+      background: #eee;
+    }
+
+    .add {
+      position: fixed;
+      bottom: 20px;
+      left: 16px;
+      right: 16px;
     }
   </style>
 </head>
 
 <body>
-
   <h1>📋 Мои привычки</h1>
+  <div id="habits">Загрузка…</div>
 
-  <div class="card">
-    <div class="muted">Telegram ID:</div>
-    <div id="tg-id">—</div>
+  <div class="add">
+    <button class="primary" onclick="addHabit()">➕ Добавить привычку</button>
   </div>
 
-  <div class="card">
-    <button onclick="testAction()">✅ Mini App работает</button>
-  </div>
+<script>
+  const tg = Telegram.WebApp;
+  tg.expand();
 
-  <script>
-    const tg = window.Telegram.WebApp;
+  const habitsEl = document.getElementById("habits");
 
-    // Раскрываем Mini App на весь экран
-    tg.expand();
+  // ❌ Если открыли НЕ из Telegram — показываем сообщение
+  if (!tg.initDataUnsafe || !tg.initDataUnsafe.user) {
+    habitsEl.innerHTML = "❌ Открой приложение из Telegram";
+    throw new Error("Not in Telegram");
+  }
 
-    // Показываем telegram_id
-    const user = tg.initDataUnsafe?.user;
+  const TELEGRAM_ID = tg.initDataUnsafe.user.id;
 
-    if (user) {
-      document.getElementById("tg-id").innerText = user.id;
-    } else {
-      document.getElementById("tg-id").innerText = "Открой из Telegram";
+  async function api(path, body = {}) {
+    try {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          telegram_id: TELEGRAM_ID,
+          ...body
+        })
+      });
+
+      return await res.json();
+    } catch (e) {
+      habitsEl.innerHTML = "⚠️ Ошибка загрузки данных";
+      throw e;
+    }
+  }
+
+  async function loadHabits() {
+    habitsEl.innerHTML = "Загрузка…";
+
+    const habits = await api("/api/habits");
+
+    if (!habits.length) {
+      habitsEl.innerHTML = "Пока нет привычек 🙂";
+      return;
     }
 
-    function testAction() {
-      tg.showAlert("🚀 Mini App запущен и работает");
-    }
-  </script>
+    habitsEl.innerHTML = "";
 
+    habits.forEach(h => {
+      const div = document.createElement("div");
+      div.className = "card";
+
+      div.innerHTML = `
+        <b>${h.title}</b><br>
+        🔥 Серия: ${h.streak}
+
+        <button class="primary" onclick="done(${h.id})">
+          ✅ Выполнено
+        </button>
+
+        <button class="danger" onclick="delHabit(${h.id})">
+          🗑 Удалить
+        </button>
+      `;
+
+      habitsEl.appendChild(div);
+    });
+  }
+
+  async function done(id) {
+    tg.HapticFeedback.impactOccurred("light");
+    await api("/api/done", { habit_id: id });
+    loadHabits();
+  }
+
+  async function delHabit(id) {
+    if (!confirm("Удалить привычку?")) return;
+    tg.HapticFeedback.impactOccurred("medium");
+    await api("/api/delete", { habit_id: id });
+    loadHabits();
+  }
+
+  async function addHabit() {
+    const title = prompt("Название привычки");
+    if (!title || title.length < 2) return;
+
+    tg.HapticFeedback.impactOccurred("light");
+    await api("/api/add", { title });
+    loadHabits();
+  }
+
+  loadHabits();
+</script>
 </body>
 </html>
