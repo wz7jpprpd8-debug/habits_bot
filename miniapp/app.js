@@ -1,6 +1,6 @@
 const tg = window.Telegram?.WebApp;
 
-const API_URL = "https://ТВОЙ-БОТ-ДОМЕН"; // ← ПОКА ТАК
+const API_URL = "https://storied-bubblegum-a94e6a.netlify.app"; // ← ПОКА ТАК
 
 let user;
 
