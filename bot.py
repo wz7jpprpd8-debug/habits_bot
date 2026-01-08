@@ -10,6 +10,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.utils import executor
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 from openai import OpenAI
 
@@ -45,6 +46,19 @@ async def init_db():
         await conn.execute(f.read())
     await conn.close()
 
+main_menu = ReplyKeyboardMarkup(resize_keyboard=True)
+main_menu.add(
+    KeyboardButton("➕ Добавить привычку"),
+    KeyboardButton("📋 Мои привычки"),
+)
+main_menu.add(
+    KeyboardButton("📊 Статистика"),
+    KeyboardButton("🧠 AI-анализ"),
+)
+main_menu.add(
+    KeyboardButton("⏰ Напоминания"),
+    KeyboardButton("⚙️ Настройки"),
+)
 
 # =========================
 # COMMANDS
@@ -66,13 +80,50 @@ async def start_cmd(message: types.Message):
 
     await message.answer(
         "👋 Привет!\n\n"
-        "Я бот для трекинга привычек.\n\n"
-        "Команды:\n"
-        "/add Название привычки\n"
-        "/list — список привычек\n"
-        "/stats — статистика\n"
-        "/analysis — AI-анализ\n"
+        "Я помогу тебе выработать полезные привычки.\n"
+        "Выбери действие 👇",
+        reply_markup=main_menu
     )
+
+@dp.message_handler(lambda m: m.text == "➕ Добавить привычку")
+async def add_habit_button(message: types.Message):
+    await message.answer(
+        "✏️ Напиши название привычки:\n"
+        "Пример: Чтение"
+    )
+
+@dp.message_handler(lambda m: m.text == "📋 Мои привычки")
+async def list_button(message: types.Message):
+    await list_habits(message)
+
+@dp.message_handler(lambda m: m.text == "📊 Статистика")
+async def stats_button(message: types.Message):
+    await stats_cmd(message)
+
+@dp.message_handler(lambda m: m.text == "🧠 AI-анализ")
+async def ai_button(message: types.Message):
+    await ai_analysis(message)
+
+@dp.message_handler(lambda m: m.text == "⏰ Напоминания")
+async def reminder_help(message: types.Message):
+    await message.answer(
+        "⏰ Напоминания\n\n"
+        "1️⃣ Установи часовой пояс:\n"
+        "/timezone +3\n\n"
+        "2️⃣ Установи время:\n"
+        "/reminder 21:00"
+    )
+
+@dp.message_handler(lambda m: m.text == "⚙️ Настройки")
+async def settings_menu(message: types.Message):
+    await message.answer(
+        "⚙️ Настройки:\n\n"
+        "🌍 /timezone +3\n"
+        "💎 /premium\n"
+        "ℹ️ /start"
+    )
+
+
 @dp.message_handler(commands=["timezone"])
 async def set_timezone(message: types.Message):
     args = message.get_args().strip()
